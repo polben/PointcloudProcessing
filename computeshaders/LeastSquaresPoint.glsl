@@ -22,11 +22,11 @@ layout(std430, binding = 3) buffer Correspondences {
 };
 
 layout(std430, binding = 4) buffer Hessians {
-    float Hs[][6][6];
+    float Hs[][8][8];
 };
 
 layout(std430, binding = 5) buffer Bside {
-    float Bs[][6];
+    float Bs[][8];
 };
 
 
@@ -94,7 +94,7 @@ uint naiveClosest(vec3 point){
     uint closestIndex = 0;
     float minDist = 1.23e20;
 
-    for(uint i = 0; i < points_a.length(); i++){
+    for(uint i = 0; i < lens_data.x; i++){
         float dist = dot(vec3(points_a[i]) - point, vec3(points_a[i]) - point);
         if(dist < minDist){
             closestIndex = i;
@@ -117,7 +117,7 @@ int findClosestScanLine(vec4 refpoint){
     float height = projectSpherePoint(refpoint).y;
 
     int low = 0;
-    int high = scan_lines.length() - 1;
+    int high = int(lens_data.z); // scan line count
     int closest = 0;
 
     float minhdiff = 1.23e20;
@@ -211,7 +211,7 @@ void main() {
     uint idy = id.y;
 
 
-    if (idx >= lens_data[1]) { // length of points_b
+    if (idx >= lens_data.y) { // length of points_b
         return;
     }
 
@@ -225,7 +225,7 @@ void main() {
         int scans_to_check = 10;
 
 
-        for (int i = max(0, closest_scan - scans_to_check); i <= min(scan_lines.length() - 1, closest_scan + scans_to_check); i++) {
+        for (int i = max(0, closest_scan - scans_to_check); i <= min(int(lens_data.z) - 1, closest_scan + scans_to_check); i++) {
             vec2 res = binsearchAndCheck(i, refPoint);
             if (res.y < minDist) {
                 minDist = res.y;

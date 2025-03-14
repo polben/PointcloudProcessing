@@ -18,17 +18,22 @@ layout(std430, binding = 2) buffer ScanLines {
 };
 
 
-layout(std430, binding = 3) buffer Hessians {
-    float Hs[][6][6];
+layout(std430, binding = 4) buffer Hessians {
+    float Hs[][8][8];
 };
 
-layout(std430, binding = 4) buffer Bside {
-    float Bs[][6];
+layout(std430, binding = 5) buffer Bside {
+    float Bs[][8];
 };
 
+layout(std430, binding = 6) buffer NormalsA {
+    vec4 normals_a[];
+};
 
 uniform vec4 origin;
 uniform vec4 debug_info;
+uniform uvec4 lens_data;
+
 
 vec4 projectSpherePoint(vec4 point){
     float lidar_tall = 0.254;
@@ -90,7 +95,7 @@ uint naiveClosest(vec3 point){
     uint closestIndex = 0;
     float minDist = 1.23e20;
 
-    for(uint i = 0; i < points_a.length(); i++){
+    for(uint i = 0; i < lens_data.x; i++){
         float dist = dot(vec3(points_a[i]) - point, vec3(points_a[i]) - point);
         if(dist < minDist){
             closestIndex = i;
@@ -112,13 +117,11 @@ float distsq(vec4 a, vec4 b){
 int findClosestScanLine(vec4 refpoint){
     float height = projectSpherePoint(refpoint).y;
 
-    int low = 0;
-    int high = scan_lines.length() - 1;
     int closest = 0;
 
     float minhdiff = 1.23e20;
 
-    for (int i = 0; i <= high; i++){
+    for (int i = 0; i < int(lens_data.z); i++){
         int begin = int(scan_lines[i][0]);
 
         vec4 ap = projectSpherePoint(points_a[begin]);
@@ -164,83 +167,91 @@ vec2 binsearchAndCheck(int scanLine, vec4 refPoint){
 
 
 
-void getJ(vec3 point, out float j[3][6]) {
-    float x = point[0];
-    float y = point[1];
-    float z = point[2];
+void getJ(vec4 point, vec4 normal, out float j[6]) {
+    float nx = normal.x;
+    float ny = normal.y;
+    float nz = normal.z;
+    float x = point.x;
+    float y = point.y;
+    float z = point.z;
 
-    // Filling the matrix based on the provided formula
-    j[0][0] = 1.0; j[0][1] = 0.0; j[0][2] = 0.0;    j[0][3] = 0.0; j[0][4] = -z; j[0][5] = y;
-    j[1][0] = 0.0; j[1][1] = 1.0; j[1][2] = 0.0;    j[1][3] = z;  j[1][4] = 0.0; j[1][5] = -x;
-    j[2][0] = 0.0; j[2][1] = 0.0; j[2][2] = 1.0;    j[2][3] = -y; j[2][4] = x;  j[2][5] = 0.0;
-
+    // Point-to-Plane Jacobian (1x6 row vector)
+    j[0] = nx;                    // Translation X
+    j[1] = ny;                    // Translation Y
+    j[2] = nz;                    // Translation Z
+    j[3] = ny * z - nz * y;        // Rotation X
+    j[4] = nz * x - nx * z;        // Rotation Y
+    j[5] = nx * y - ny * x;        // Rotation Z
 }
 
-void getH(in float[3][6] J_in, out float h[6][6], uint idx, float valid) {
-
+void getH(in float[6] J_in, uint idx, float valid) {
     for (int i = 0; i < 6; i++) {
         for (int j = 0; j < 6; j++) {
-            float sum_val = 0.0;
-            for (int k = 0; k < 3; k++) {
-                sum_val += J_in[k][i] * J_in[k][j];
-            }
-            //h[i][j] = sum_val;
+            float sum_val = J_in[i] * J_in[j]; // J^T J for a 1x6 Jacobian
             Hs[idx][i][j] = sum_val * valid;
         }
     }
 }
 
-void getB(in float[3][6] J_i, in float[3] e_i, out float b[6], uint idx, float valid) {
+void getB(in float[6] J_i, in float e_i, uint idx, float valid) {
     for (int i = 0; i < 6; i++) {
-        float sum_val = 0.0;
-        for (int k = 0; k < 3; k++) {
-            sum_val += J_i[k][i] * e_i[k];
-        }
-        //b[i] = sum_val;
+        float sum_val = J_i[i] * e_i; // J^T * e
         Bs[idx][i] = sum_val * valid;
     }
+
 }
 
-void getNormal(uint closest_index, int min_scan){
-    point
-}
+
 
 void main() {
     uvec2 id = gl_GlobalInvocationID.xy;
     uint idx = id.x;
     uint idy = id.y;
 
-    if (idx >= points_b.length()) {
+    if (idx >= lens_data.y) {
         return;
     }
+
+    /*Hs[idx][0][0] = -12.3;
+    Hs[idx][0][1] = float(lens_data.x);
+    Hs[idx][0][2] = float(lens_data.y);
+    Hs[idx][0][3] = float(lens_data.z);
+    Hs[idx][0][4] = float(idx);
+    Hs[idx][7][7] = -1.0;
+
+    Hs[idx][1][0] = normals_a[idx][0];
+    Hs[idx][1][1] = normals_a[idx][1];
+    Hs[idx][1][2] = normals_a[idx][2];
+
+    Bs[idx][0] = -999.3;
+    Bs[idx][1] = float(idx);
+    Bs[idx][2] = float(lens_data.x);
+    Bs[idx][3] = float(lens_data.y);
+    Bs[idx][4] = float(lens_data.z);*/
 
     float minDist = 1.23e20;
     int minind = 0;
     vec4 refPoint = points_b[idx];
     int min_scan = 0;
 
-    if (debug_info[0] < 1.0) {
 
-        int closest_scan = findClosestScanLine(refPoint);
-        int scans_to_check = 10;
+    int closest_scan = findClosestScanLine(refPoint);
+    int scans_to_check = 10;
 
 
-        for (int i = max(0, closest_scan - scans_to_check); i <= min(scan_lines.length() - 1, closest_scan + scans_to_check); i++) {
-            vec2 res = binsearchAndCheck(i, refPoint);
-            if (res.y < minDist) {
-                minDist = res.y;
-                minind = int(res.x);
-                min_scan = i;
-            }
+    for (int i = max(0, closest_scan - scans_to_check); i <= min(int(lens_data.z) - 1, closest_scan + scans_to_check); i++) {
+        vec2 res = binsearchAndCheck(i, refPoint);
+        if (res.y < minDist) {
+            minDist = res.y;
+            minind = int(res.x);
+            min_scan = i;
         }
-    }else{
-        minDist = 0.0;
-        minind = int(idx);
     }
 
-    vec4 normal = getNormal(minind, min_scan);
 
-    float outlierError = 0.1;
+    vec4 normal = normals_a[minind];
+
+    float outlierError = 10;
 
     vec3 p1 = vec3(points_a[minind]);
     vec3 p2 = vec3(refPoint);
@@ -252,18 +263,15 @@ void main() {
         valid = 0.0;
     }
 
-    float[3] err;
-    err[0] = p1.x - p2.x;
-    err[1] = p1.y - p2.y;
-    err[2] = p1.z - p2.z;
+    float err = dot(vec3(normal), (p1 - p2));
 
-    float[3][6] j;
-    getJ(p2, j);
+    float[6] j;
+    getJ(points_a[minind], normal, j);
 
-    float[6][6] h;
-    getH(j, h, idx, valid);
+    getH(j, idx, valid);
 
-    float[6] b;
-    getB(j, err, b, idx, valid);
+    getB(j, err, idx, valid);
+
+
 
 }

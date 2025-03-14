@@ -28,7 +28,7 @@ class LidarDataReader:
 
 
 
-    def __init__(self, path, oxtsDataReader, calibration, targetCamera):
+    def __init__(self, path, oxtsDataReader, calibration, targetCamera, max_read=10):
         self.root = self.getRoot(path)
         self.oxtsDataReader = oxtsDataReader
         self.calibrationPath = calibration
@@ -42,7 +42,7 @@ class LidarDataReader:
 
         count = 0
 
-        self.MAX_DATA_READ = 10
+        self.MAX_DATA_READ = max_read
         self.DEFAULT_COLOR = np.array([255, 178, 102])
 
         self.timestamps = self.readTimestamps(self.root + self.TIMESTAMPS)

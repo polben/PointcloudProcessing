@@ -574,8 +574,6 @@ def display_points(renderer, icpContainer):
     renderer.addPoints(pts1, green)
     renderer.addPoints(pts2, red)
 
-def incremental_ls_test(renderer, icpContainer):
-
 
 
 

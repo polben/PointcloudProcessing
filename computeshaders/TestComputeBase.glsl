@@ -22,11 +22,11 @@ layout(std430, binding = 3) buffer Correspondences {
 };
 
 layout(std430, binding = 4) buffer Hessians {
-    float Hs[][6][6];
+    float Hs[][8][8];
 };
 
 layout(std430, binding = 5) buffer Bside {
-    float Bs[][6];
+    float Bs[][8];
 };
 
 

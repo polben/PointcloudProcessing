@@ -46,9 +46,9 @@ class FunctionalTesting(unittest.TestCase):
         self.renderingThread.join()
 
 
-    def getLidarPoints(self):
+    def getLidarPoints(self, index=0):
         filenames = self.lidarDataReader.getfilenames()
-        pts, cols = self.lidarDataReader.getPoints(filenames[0])
+        pts, cols = self.lidarDataReader.getPoints(filenames[index])
         return pts
 
     def test_canDisplayPoints(self):
@@ -56,31 +56,8 @@ class FunctionalTesting(unittest.TestCase):
 
         self.renderer.addPoints(pts)
 
-    def test_getNormalsTest(self):
-        lines = []
-        line_colors = []
-
-
-
-        def addScanLineRender(sl, points):
-            s, e = sl
-            lps = points[s: e +1]
-            lps = self.icpContainer.connectPointsInOrder(lps)
-            color = randcolor()
-
-
-            for p in lps:
-                lines.append(p)
-                line_colors.append(color)
-
-        def addLine(p1, p2, color = None):
-            lines.extend([p1, p2])
-            if color is None:
-                color = randcolor()
-
-
-            line_colors.extend([color, color])
-
+    @staticmethod
+    def getNormals(scan_lines, points, origin, icpContainer):
         def cos(index, refvec, origin, points):
             lidar_tall = 0.254
             lidarOffset = np.array([0, lidar_tall / 2.0, 0])
@@ -108,36 +85,13 @@ class FunctionalTesting(unittest.TestCase):
             else:
                 return 1.0
 
-        def randcolor():
-            return np.array([randint(0, 255), randint(0, 255), randint(0, 255)])
-
-        def getcolor(r, g, b):
-            return np.array([r, g, b])
-
         def distsq(p1, p2):
             diff = p1 - p2
             return np.dot(diff, diff)
 
-        def findClosestPoint(scan_lines, origin, points, refp):
-
-            mind = 1.23e20
-            minind = 0
-            minscan = 0
-            for i in range(len(scan_lines)):
-                closest_on_line = binarySearchAndCheck(scan_lines, i, refp, points, origin)
-                d = distsq(points[closest_on_line], refp)
-                if d < mind:
-                    mind = d
-                    minind = closest_on_line
-                    minscan = i
-
-            return minind, minscan, mind
-
-
-
         def binaryScanCircleCheck(begin, end, refp, origin, points):
-            refvec = self.icpContainer.sphereProjectPont(refp, origin)
-            circlen = end -begin + 1
+            refvec = icpContainer.sphereProjectPont(refp, origin)
+            circlen = end - begin + 1
             index = (begin + end) // 2
             half_c = circlen // 2
 
@@ -177,12 +131,12 @@ class FunctionalTesting(unittest.TestCase):
                 if begin <= pointindex and pointindex <= end:
                     return i
 
-        def getClosestAboveOrBelow(scan_lines, minscan, refp, points, origin):
+        def getClosestAboveOrBelow(scan_lines, minscan, refp, points, origin, point_index):
             if minscan == len(scan_lines) - 1:
-                return binarySearchAndCheck(scan_lines, minscan - 1, refp, points, origin, -1)
+                return binarySearchAndCheck(scan_lines, minscan - 1, refp, points, origin, point_index)
 
             if minscan == 0:
-                return binarySearchAndCheck(scan_lines, minscan + 1, refp, points, origin, -1)
+                return binarySearchAndCheck(scan_lines, minscan + 1, refp, points, origin, point_index)
 
             minabove = binarySearchAndCheck(scan_lines, minscan - 1, refp, points, origin)
             minbelow = binarySearchAndCheck(scan_lines, minscan + 1, refp, points, origin)
@@ -204,7 +158,7 @@ class FunctionalTesting(unittest.TestCase):
             minscan = getScanlineOfPoint(scan_lines, point_index)
 
             closest_online = binarySearchAndCheck(scan_lines, minscan, refp, points, origin, point_index)
-            closest_next = getClosestAboveOrBelow(scan_lines, minscan, refp, points, origin)
+            closest_next = getClosestAboveOrBelow(scan_lines, minscan, refp, points, origin, point_index)
 
             v1 = points[closest_online] - refp
             v2 = points[closest_next] - refp
@@ -214,28 +168,102 @@ class FunctionalTesting(unittest.TestCase):
             cross = np.cross(v1, v2)
             return cross / np.linalg.norm(cross)
 
+        def normalTowardsOrigin(origin, normal, pointind, points):
+            to_origin = origin - points[pointind]
+            to_origin_n = to_origin / np.linalg.norm(to_origin)
+
+            if np.dot(normal, to_origin_n) > np.dot(-normal, to_origin_n):
+                return normal
+            else:
+                return -normal
+
+
+        normals = []
+        for i in range(0, len(points), 1):
+            normal = getNormal(scan_lines, i, points, origin)
+            normal = normalTowardsOrigin(origin, normal, i, points)
+            normals.append(normal)
+
+            if i % 10000 == 0:
+                print(i)
+
+        return normals
+
+    def test_getNormalsTest(self):
+        lines = []
+        line_colors = []
+
+        def randcolor():
+            return np.array([randint(0, 255), randint(0, 255), randint(0, 255)])
+
+        def getcolor(r, g, b):
+            return np.array([r, g, b])
+
+
+
+        def addLine(p1, p2, color = None):
+            lines.extend([p1, p2])
+            if color is None:
+                color = randcolor()
+
+
+            line_colors.extend([color, color])
+
+
         origin = np.array([0, 0, 0])
         pts = self.getLidarPoints() + origin
 
         self.renderer.addPoints(pts)
         scan_lines = self.icpContainer.getScanLines(pts, origin)
 
+
+        normals = FunctionalTesting.getNormals(scan_lines, pts, origin, self.icpContainer)
+
         for i in range(0, len(pts), 1):
-            # randind = randint(1, len(pts))
-            randind = i
-            refp = pts[randind]
-
-            # addLine(refp, origin, getcolor(255,0,0))
-
-            normal = getNormal(scan_lines, randind, pts, origin)
-
+            refp = pts[i]
+            normal = normals[i]
             addLine(refp, refp + normal * 0.1, getcolor(255, 255, 255))
-            # addLine(refp, origin)
 
             if i % 1000 == 0:
                 self.renderer.setLines(lines, line_colors)
 
         self.assertTrue(True)
+
+    def test_gpuNormals(self):
+
+        lines = []
+        line_colors = []
+
+
+        def addLine(p1, p2, color=None):
+            lines.extend([p1, p2])
+            if color is None:
+                color = np.array([255,255,255])
+
+            line_colors.extend([color, color])
+
+        def getcolor(r, g, b):
+            return np.array([r, g, b])
+
+        origin = np.array([0, 0, 0])
+        pts = self.getLidarPoints() + origin
+
+        self.renderer.addPoints(pts)
+        scan_lines = self.icpContainer.getScanLines(pts, origin)
+
+        self.computeShader.prepareDispatchNormals(pts, scan_lines, origin)
+        normals = self.computeShader.normals_out_a
+
+        for i in range(0, len(pts), 1):
+
+            refp = pts[i]
+            normal = normals[i][:3]
+
+            addLine(refp, refp + normal * 0.1, getcolor(255, 255, 255))
+
+            if i % 1000 == 0:
+                self.renderer.setLines(lines, line_colors)
+
 
     def test_pointToPointLSShouldConverge(self):
         origin = np.array([0, 0, 0])
@@ -304,3 +332,80 @@ class FunctionalTesting(unittest.TestCase):
         time.sleep(1)
 
         self.renderer.addPoints(pts2, self.red)  # display transformed points
+
+
+    def test_pointToPlaneLSShouldConverge(self):
+        origin = np.array([0, 0, 0])
+
+        key1 = 0
+        key2 = 9
+
+
+        pts1 = self.getLidarPoints(key1)
+
+        pts2 = self.getLidarPoints(key2)
+
+        pts1 += origin
+        pts2 += origin
+
+        randrot = PointcloudAlignment.randomRotation(0.01)
+        randtrans = PointcloudAlignment.randomTranslation1() * 0.01
+
+        pts2 = (randrot @ pts2.T).T + randtrans
+
+        self.renderer.addPoints(pts1, self.green)
+        pp2 = self.renderer.addPoints(pts2, self.red)
+
+        reference_grid = self.icpContainer.getUniformGrid(10)
+        rgp = self.renderer.addPoints(reference_grid, self.blue)
+
+        scan_lines = self.icpContainer.getScanLines(pts1, origin)
+
+        time.sleep(2)
+
+        start = time.time()
+        self.computeShader.preparePointPlane(pts1, scan_lines,pts2,origin, False)
+        print("prep pointplane: " + str(time.time()-start))
+
+
+        for i in range(20):
+            start = time.time()
+            Hs, Bs = self.computeShader.dispatchPointPlane(pts2)
+            print("dispatch pointplane: " + str(time.time() - start))
+
+            H = np.sum(Hs, axis=0)[:6, :6]
+            b = np.sum(Bs, axis=0)[:6]
+
+            delta_x = np.linalg.solve(H, -b)
+            t, R = delta_x[:3], delta_x[3:]
+
+            R = PointcloudAlignment.rotation(R[0], R[1], R[2])
+            pts2 = self.icpContainer.apply_iteration_of_ls(pts2, t, R)
+            reference_grid = self.icpContainer.applyIcpStep(reference_grid, R, t)
+
+            self.renderer.freePoints(rgp)
+            rgp = self.renderer.addPoints(reference_grid, self.blue)
+
+            self.renderer.freePoints(pp2)
+            pp2 = self.renderer.addPoints(pts2, self.white)
+            # time.sleep(0.1)
+            print(i)
+
+        R_opt, t_opt = self.icpContainer.uniform_optimal_icp(reference_grid, self.icpContainer.getUniformGrid(10))
+
+
+        refgrid = self.icpContainer.getUniformGrid(10)
+        g2p = self.renderer.addPoints(refgrid, np.array([255,0,0]))
+        time.sleep(1)
+        self.renderer.freePoints(g2p)
+        time.sleep(1)
+        refgrid_opt = (R_opt @ refgrid.T).T + t_opt
+        g2_op = self.renderer.addPoints(refgrid_opt, np.array([255,0,0]))
+
+        pts2 = self.getLidarPoints(key2)
+        pts2 = (randrot @ pts2.T).T + randtrans
+        pts2 = (R_opt @ pts2.T).T - t_opt
+
+        self.renderer.freePoints(pp2)
+        self.renderer.addPoints(pts2, np.array([255,0,0]))
+

@@ -111,8 +111,8 @@ class PointcloudIcpContainer:
         #print("compute time: " + str(time.time()-st))
 
         #st = time.time()
-        H = np.sum(Hs, axis=0)
-        b = np.sum(Bs, axis=0)
+        H = np.sum(Hs, axis=0)[:6, :6]
+        b = np.sum(Bs, axis=0)[:6]
         #print("numpy time: " + str(time.time()-st))
 
         delta_x = np.linalg.solve(H, -b)

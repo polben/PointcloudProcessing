@@ -1,3 +1,4 @@
+import time
 import unittest
 import numpy as np
 
@@ -6,7 +7,7 @@ from LidarDataReader import LidarDataReader
 from OxtsDataReader import OxtsDataReader
 from PointcloudAlignment import PointcloudAlignment
 from PointcloudIcpContainer import PointcloudIcpContainer
-
+from tests.FunctionalTesting import FunctionalTesting
 
 
 class GpuTest(unittest.TestCase):
@@ -32,7 +33,10 @@ class GpuTest(unittest.TestCase):
     def tearDown(self):
         self.computeShader.cleanup()
 
-
+    def getLidarPoints(self):
+        filenames = self.lidarDataReader.getfilenames()
+        pts, cols = self.lidarDataReader.getPoints(filenames[0])
+        return pts
 
     def test_shouldInitPrograms(self):
         self.assertTrue(self.computeShader.least_squares_point is not None)
@@ -159,10 +163,7 @@ class GpuTest(unittest.TestCase):
         self.computeShader.setActiveProgram(program)
 
 
-        self.computeShader.saveUniformInfo(points_a, points_b, origin, True)
-        self.computeShader.setUniforms(program)
-
-        self.assertTrue(np.array_equal(self.computeShader.lens_data, np.array([1, 1, 0, 0], dtype=np.uint32)))
+        self.computeShader.setUniform(program, "lens_data", np.array([1, 1, 0, 0]))
 
         self.computeShader.dispatchCurrentProgramWait(1)
 
@@ -228,8 +229,9 @@ class GpuTest(unittest.TestCase):
         points_b = np.array([[1, 1, 1]])
         origin = np.array([0, 0, 0])
 
-        self.computeShader.saveUniformInfo(points_a, points_b, origin, True)
-        self.computeShader.setUniforms(program)
+        lens_data = np.array([1, 1, 0, 0]).astype(np.uint32)
+        self.computeShader.setUniform(program, "lens_data", lens_data)
+        self.computeShader.lens_data = lens_data
 
         self.computeShader.dispatchCurrentProgramWait(1)
 
@@ -239,7 +241,6 @@ class GpuTest(unittest.TestCase):
         expected_value = np.array([1.0, 6.0, 9.0, -1.0])
         self.assertTrue(np.array_equal(self.computeShader.corr_out[0], expected_value))
 
-
         for i in range(5):
             self.computeShader.dispatchCurrentProgramWait(1)
             self.computeShader.getBufferSubdata(self.computeShader.ssbo_correspondence)
@@ -247,6 +248,156 @@ class GpuTest(unittest.TestCase):
 
             expected_value = np.array([2.0 + float(i), 6.0, 9.0, -1.0])
             self.assertTrue(np.array_equal(self.computeShader.corr_out[0], expected_value))
+
+    def test_shouldAccessPointsB(self):
+        basecode = self.computeShader.glslFile(self.baseComputeShader)
+
+        code = """
+
+                corr[idx] = points_b[idx];
+
+                """
+
+        code = self.addCodeToBase(basecode, code)
+
+        program = self.computeShader.create_shader_program(code)
+        self.computeShader.setActiveProgram(program)
+
+        points_a = np.tile(np.array([1, 1, 1]), (100, 1))
+        points_b = np.tile(np.array([123, 123, 123, 123]), (200, 1)).astype(np.float32)
+        origin = np.array([0, 0, 0])
+        scan_lines = np.zeros((len(points_a), 4))
+
+        self.computeShader.saveUniformInfo(points_a, points_b, origin, scan_lines, True)
+        self.computeShader.setCommonUniforms(program)
+
+        self.computeShader.bufferSubdata(points_a, self.computeShader.ssbo_points_a)
+        self.computeShader.bufferSubdata(points_b, self.computeShader.ssbo_points_b)
+        self.computeShader.bufferSubdata(scan_lines, self.computeShader.ssbo_scan_lines)
+
+        self.computeShader.dispatchCurrentProgramWait(len(points_b))
+
+
+        self.computeShader.getBufferSubdata(self.computeShader.ssbo_correspondence)
+        corrs = self.computeShader.corr_out
+        self.assertTrue(corrs.shape == points_b.shape)
+        self.assertTrue(np.array_equal( corrs, points_b))
+
+    def test_shouldAccessPointsA(self):
+        basecode = self.computeShader.glslFile(self.baseComputeShader)
+
+        code = """
+
+                corr[idx] = points_a[idx];
+
+                """
+
+        code = self.addCodeToBase(basecode, code)
+
+        program = self.computeShader.create_shader_program(code)
+        self.computeShader.setActiveProgram(program)
+
+        points_a = np.tile(np.array([1, 1, 1, 1]), (100, 1)).astype(np.float32)
+        points_b = np.tile(np.array([123, 123, 123, 123]), (200, 1)).astype(np.float32)
+        origin = np.array([0, 0, 0])
+        scan_lines = np.zeros((len(points_a), 4))
+
+        self.computeShader.setUniform(program, "lens_data", np.array([0, 100, 0, 0]))
+
+        self.computeShader.bufferSubdata(points_a, self.computeShader.ssbo_points_a)
+        self.computeShader.bufferSubdata(points_b, self.computeShader.ssbo_points_b)
+        self.computeShader.bufferSubdata(scan_lines, self.computeShader.ssbo_scan_lines)
+
+        self.computeShader.dispatchCurrentProgramWait(len(points_a))
+
+
+        self.computeShader.getBufferSubdata(self.computeShader.ssbo_correspondence)
+        corrs = self.computeShader.corr_out
+        self.assertTrue(corrs.shape == points_a.shape)
+        self.assertTrue(np.array_equal( corrs, points_a))
+
+
+    def test_shouldGetDataInNormals(self):
+        points_a = np.tile(np.array([1, 1, 1, 1]), (100, 1)).astype(np.float32)
+        origin = np.array([0, 0, 0])
+        scan_lines = np.zeros((len(points_a), 4))
+        self.computeShader.prepareDispatchNormals(points_a, scan_lines, origin)
+        self.assertTrue(self.computeShader.normals_out_a.shape == points_a.shape)
+
+    def test_shouldGetSameNormalsFromGpu(self):
+        pts = self.getLidarPoints()
+        origin = np.array([0, 0, 0])
+        scan_lines = self.icpContainer.getScanLines(pts, origin)
+
+        start = time.time()
+        self.computeShader.prepareDispatchNormals(pts, scan_lines, origin)
+        print("gpu normal time: " + str(time.time() - start))
+        normals = self.computeShader.normals_out_a
+
+        normals_ref = FunctionalTesting.getNormals(scan_lines, pts, origin, self.icpContainer)
+        normals_ref = np.array(normals_ref).astype(np.float32)
+        normals_ref = np.insert(normals_ref, 3, 0, axis=1)
+        diff = normals - normals_ref # there is a single normal that is different?
+
+        ok = 0
+        err = 0
+        for p in diff:
+            if np.linalg.norm(p) < self.tolerance:
+                ok += 1
+            else:
+                err += 1
+
+        ok_percent = float(ok) / len(diff)
+        print(ok_percent)
+        print("error: " + str(err) + " / " + str(len(diff)))
+        self.assertTrue(ok_percent > 0.999)
+
+    def test_shouldSetHandB(self):
+        basecode = self.computeShader.glslFile(self.baseComputeShader)
+
+        code = """
+
+                Hs[idx][0][0] = -12.3;
+                Hs[idx][0][1] = float(lens_data.x);
+                Hs[idx][0][2] = float(lens_data.y);
+                Hs[idx][0][3] = float(lens_data.z);
+                Hs[idx][0][4] = float(idx);
+                Hs[idx][7][7] = -1.0;
+                
+                Bs[idx][0] = -999.3;
+                Bs[idx][1] = float(idx);
+                Bs[idx][2] = float(lens_data.x);
+                Bs[idx][3] = float(lens_data.y);
+                Bs[idx][4] = float(lens_data.z);
+
+                """
+
+        code = self.addCodeToBase(basecode, code)
+
+        program = self.computeShader.create_shader_program(code)
+        self.computeShader.setActiveProgram(program)
+
+        points_a = np.tile(np.array([1, 1, 1]), (100, 1))
+        points_b = np.tile(np.array([123, 123, 123, 123]), (200, 1)).astype(np.float32)
+        origin = np.array([0, 0, 0])
+        scan_lines = np.zeros((len(points_a), 4))
+
+        self.computeShader.saveUniformInfo(points_a, points_b, origin, scan_lines, True)
+        self.computeShader.setCommonUniforms(program)
+
+        self.computeShader.bufferSubdata(points_a, self.computeShader.ssbo_points_a)
+        self.computeShader.bufferSubdata(points_b, self.computeShader.ssbo_points_b)
+        self.computeShader.bufferSubdata(scan_lines, self.computeShader.ssbo_scan_lines)
+
+        self.computeShader.dispatchCurrentProgramWait(len(points_b))
+
+
+        self.computeShader.getBufferSubdata(self.computeShader.ssbo_Hs)
+        h1 = self.computeShader.hs_out[0]
+        h2 = self.computeShader.hs_out[1]
+        h3 = self.computeShader.hs_out[2]
+
+        self.computeShader.getBufferSubdata(self.computeShader.ssbo_Bs)
 
 
 
@@ -299,7 +450,7 @@ class GpuTest(unittest.TestCase):
 
         grid1 = self.icpContainer.getUniformGrid(10)
 
-        R, (x, y, z) = PointcloudAlignment.randomRotation(0.4)
+        R = PointcloudAlignment.randomRotation(0.4)
         t = PointcloudAlignment.randomTranslation1() * 10
         grid2 = (R @ self.icpContainer.getUniformGrid(10).T).T + t
 
