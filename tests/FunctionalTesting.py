@@ -51,6 +51,9 @@ class FunctionalTesting(unittest.TestCase):
         pts, cols = self.lidarDataReader.getPoints(filenames[index])
         return pts
 
+    def randcolor(self):
+        return np.random.rand(3, )
+
     def test_canDisplayPoints(self):
         pts = self.getLidarPoints()
 
@@ -189,25 +192,61 @@ class FunctionalTesting(unittest.TestCase):
 
         return normals
 
+    def test_shouldGetScanLines(self):
+        pts_l = self.getLidarPoints()
+        pts = self.icpContainer.sphereProjectPoints(pts_l, np.array([0, 0, 0]))
+
+        sphere = self.icpContainer.sphereProjectPoints(pts_l, np.array([0, 0, 0])) * 1.01
+        self.renderer.addPoints(pts_l, np.array([0.5, 0.5, 0.5]))
+
+        stt = time.time()
+        scan_lines = self.icpContainer.getScanLines(pts_l, np.array([0, 0, 0]))
+
+        print("scans: " + str(time.time() - stt))
+
+        for start, end in scan_lines:
+            scan_points = pts_l[start:end]
+            self.renderer.setLines(self.icpContainer.connectPointsInOrder(scan_points), None)
+            time.sleep(0.1)
+
+    def test_uniformGridICP_LS(self):
+        grid1 = self.icpContainer.getUniformShape()
+        R = PointcloudAlignment.randomRotation(0.4)
+        t = PointcloudAlignment.randomTranslation1() * 10
+        grid2 = (R @ self.icpContainer.getUniformShape().T).T + t
+
+        red = np.array([1, 0, 0])
+        green = np.array([0, 1, 0])
+        p1 = self.renderer.addPoints(grid1, green)
+        p2t = self.renderer.addPoints(grid2, red)
+
+        time.sleep(3)
+
+        for i in range(10):
+            t, R = self.icpContainer.icp_step_LS_vector(grid1, grid2)
+            # mean = np.mean(grid2, axis=0)
+            # grid2 = grid2 - mean
+            grid2 = (PointcloudAlignment.rotation(R[0], R[1], R[2]) @ grid2.T).T
+            grid2 -= t
+            # grid2 += mean
+
+            self.renderer.freePoints(p2t)
+            p2t = self.renderer.addPoints(grid2)
+
+
+            time.sleep(1)
+
     def test_getNormalsTest(self):
         lines = []
-        line_colors = []
 
-        def randcolor():
-            return np.array([randint(0, 255), randint(0, 255), randint(0, 255)])
 
-        def getcolor(r, g, b):
-            return np.array([r, g, b])
+
 
 
 
         def addLine(p1, p2, color = None):
             lines.extend([p1, p2])
-            if color is None:
-                color = randcolor()
 
-
-            line_colors.extend([color, color])
 
 
         origin = np.array([0, 0, 0])
@@ -222,25 +261,23 @@ class FunctionalTesting(unittest.TestCase):
         for i in range(0, len(pts), 1):
             refp = pts[i]
             normal = normals[i]
-            addLine(refp, refp + normal * 0.1, getcolor(255, 255, 255))
+            addLine(refp, refp + normal * 0.1)
 
             if i % 1000 == 0:
-                self.renderer.setLines(lines, line_colors)
+                self.renderer.setLines(lines)
 
         self.assertTrue(True)
 
     def test_gpuNormals(self):
 
         lines = []
-        line_colors = []
+        colors = []
 
 
-        def addLine(p1, p2, color=None):
+        def addLine(p1, p2):
             lines.extend([p1, p2])
-            if color is None:
-                color = np.array([255,255,255])
+            colors.extend([np.array([255,0,255]), np.array([255,0,255])])
 
-            line_colors.extend([color, color])
 
         def getcolor(r, g, b):
             return np.array([r, g, b])
@@ -259,10 +296,10 @@ class FunctionalTesting(unittest.TestCase):
             refp = pts[i]
             normal = normals[i][:3]
 
-            addLine(refp, refp + normal * 0.1, getcolor(255, 255, 255))
+            addLine(refp, refp + normal * 0.1)
 
             if i % 1000 == 0:
-                self.renderer.setLines(lines, line_colors)
+                self.renderer.setLines(lines, colors)
 
 
     def test_pointToPointLSShouldConverge(self):
@@ -291,14 +328,15 @@ class FunctionalTesting(unittest.TestCase):
 
         time.sleep(3)
 
-        self.icpContainer.initLS(pts1, pts2, origin)
+        self.icpContainer.preparePointToPoint(pts1, origin, pts2)
 
         init_err = 1e20
 
         for i in range(30):
-            t, R = self.icpContainer.iteration_of_ls(pts2)
+            st = time.time()
+            t, R = self.icpContainer.dispatchPointToPoint(pts2)
+            print("that closest point took: " + str(time.time() - st))
 
-            R = PointcloudAlignment.rotation(R[0], R[1], R[2])
             pts2 = self.icpContainer.apply_iteration_of_ls(pts2, t, R)
             reference_grid = self.icpContainer.applyIcpStep(reference_grid, R, t)
 
@@ -334,11 +372,43 @@ class FunctionalTesting(unittest.TestCase):
         self.renderer.addPoints(pts2, self.red)  # display transformed points
 
 
+    def test_findClosestPointGpu(self):
+        origin = np.array([0, 0, 0])
+
+        frame1 = 0
+        frame2 = 1
+
+        filenames = self.lidarDataReader.getfilenames()
+
+        pts1, cols = self.lidarDataReader.getPoints(filenames[frame1])
+        pts1 = self.pointcloudAlignment.align(filenames[frame1], pts1)
+
+        pts2, cols = self.lidarDataReader.getPoints(filenames[frame2])
+        pts2 = self.pointcloudAlignment.align(filenames[frame2], pts2) + np.array([0.01, 0, 0])
+
+        self.renderer.addPoints(pts1, np.array([255, 0, 0]))
+
+        self.renderer.addPoints(pts2, np.array([0, 255, 0]))
+
+        scan_lines = self.icpContainer.getScanLines(pts1, origin)
+        self.computeShader.prepareNNS(pts1, scan_lines, pts2, origin)
+
+        st = time.time()
+        corrs, dists = self.computeShader.dispatchNNS(pts2)
+        print("that closest point took: " + str(time.time() - st))
+
+        lines = []
+        for i in range(len(corrs)):
+            c = corrs[i]
+            lines.extend([pts2[i], pts1[c]])
+        self.renderer.setLines(lines)
+
+
     def test_pointToPlaneLSShouldConverge(self):
         origin = np.array([0, 0, 0])
 
         key1 = 0
-        key2 = 9
+        key2 = 1
 
 
         pts1 = self.getLidarPoints(key1)
@@ -359,27 +429,19 @@ class FunctionalTesting(unittest.TestCase):
         reference_grid = self.icpContainer.getUniformGrid(10)
         rgp = self.renderer.addPoints(reference_grid, self.blue)
 
-        scan_lines = self.icpContainer.getScanLines(pts1, origin)
 
         time.sleep(2)
 
         start = time.time()
-        self.computeShader.preparePointPlane(pts1, scan_lines,pts2,origin, False)
+        self.icpContainer.preparePointToPlane(pts1, origin, pts2)
         print("prep pointplane: " + str(time.time()-start))
 
 
-        for i in range(20):
+        for i in range(30):
             start = time.time()
-            Hs, Bs = self.computeShader.dispatchPointPlane(pts2)
+            t, R = self.icpContainer.dispatchPointToPlane(pts2)
             print("dispatch pointplane: " + str(time.time() - start))
 
-            H = np.sum(Hs, axis=0)[:6, :6]
-            b = np.sum(Bs, axis=0)[:6]
-
-            delta_x = np.linalg.solve(H, -b)
-            t, R = delta_x[:3], delta_x[3:]
-
-            R = PointcloudAlignment.rotation(R[0], R[1], R[2])
             pts2 = self.icpContainer.apply_iteration_of_ls(pts2, t, R)
             reference_grid = self.icpContainer.applyIcpStep(reference_grid, R, t)
 
@@ -409,3 +471,153 @@ class FunctionalTesting(unittest.TestCase):
         self.renderer.freePoints(pp2)
         self.renderer.addPoints(pts2, np.array([255,0,0]))
 
+
+    def test_binaryScanLineSearch(self):
+        def binaryScanLineSearch(points, scanline, reference_point, origin):
+
+            def cos(index, refvec, origin):
+                lidar_tall = 0.254
+                lidarOffset = np.array([0, lidar_tall / 2.0, 0])
+
+                v = points[index] - origin - lidarOffset
+                # v[1] = 0
+                v = v / np.linalg.norm(v)
+                return np.dot(v, refvec)
+
+            def indmod(index, clen, cbegin):
+                return (index + clen) % clen
+
+            def dir(index, circlen, begin, refVec, origin):
+                p1 = begin + indmod(index - 1, circlen, begin)
+                p2 = begin + indmod(index + 1, circlen, begin)
+                """renderer.setLines([points[p1], origin, points[p2], origin],
+                                  [np.array([255,0,0]), np.array([255,0,0]), np.array([0,255,0]),np.array([0,255,0])])
+                """
+
+                cos1 = cos(p1, refVec, origin) + 1
+                cos2 = cos(p2, refVec, origin) + 1
+
+                if cos1 > cos2:
+                    return -1.0, (2 - cos1) / 2.0
+                else:
+                    return 1.0, (2 - cos1) / 2.0
+
+            l = []
+            l.extend([origin, reference_point])
+
+            refvec = reference_point - origin
+            refvec[1] = 0
+            refvec /= np.linalg.norm(refvec)  # Normalize
+
+            begin, end = scanline
+            circlen = end - begin + 1
+
+            index = (begin + end) // 2
+            half = circlen // 2
+
+            runs = int(math.ceil(math.log2(circlen)))
+
+            counter = 0
+            for i in range(runs):
+                counter += 1
+                d, scale = dir(index=index, circlen=circlen, begin=begin, refVec=refvec, origin=origin)
+                index = indmod(index + int(half * d), circlen, begin)
+                l.extend([origin, points[begin + index]])
+
+                half = int(math.ceil(half / 2.0))
+                self.renderer.setLines(l)
+                time.sleep(0.1)
+                l.pop()
+                l.pop()
+
+            # print(counter)
+            return begin + index
+
+        filenames = self.lidarDataReader.getfilenames()
+        pts_a, cols = self.lidarDataReader.getPoints(filenames[0])
+        pts_a = self.pointcloudAlignment.align(filenames[0], pts_a)
+        origin, rot = self.pointcloudAlignment.getPose(filenames[0])
+
+        scan_lines = self.icpContainer.getScanLines(pts_a, origin)
+
+        pts_b, col = self.lidarDataReader.getPoints(filenames[1])
+        pts_b = self.pointcloudAlignment.align(filenames[0], pts_b)
+
+        lines = []
+
+        self.renderer.addPoints(pts_a, None)
+        self.renderer.addPoints(pts_b, None)
+        # for i in range(len(pts_b)):
+        if True:
+            i = 20000
+            refp = pts_b[i]
+
+            height = (refp / np.linalg.norm(refp))[1]
+            low = 0
+            high = len(scan_lines) - 1
+            closest = 0
+
+            minheightdiff = 1.23e20
+            minheightind = 0
+            while low < high:
+
+                mid = (low + high) // 2
+                scanindex = mid
+                sl = scan_lines[scanindex]
+
+                closest = binaryScanLineSearch(pts_a, sl, refp, np.array([0, 0, 0]))
+                self.renderer.setLines([pts_a[closest], refp])
+                time.sleep(1)
+
+                pc = pts_a[closest] - origin
+                pc = (pc / np.linalg.norm(pc))
+
+                ht = abs(pc[1] - height)
+                if ht < minheightdiff:
+                    minheightdiff = ht
+                    minheightind = closest
+
+                if pc[1] > height:
+                    low = mid + 1
+
+                else:
+                    high = mid
+
+            closest = minheightind
+
+            lines.append(pts_a[closest])
+            lines.append(pts_b[i])
+
+            if i % 1000 == 0:
+                self.renderer.setLines(lines, None)
+
+
+    def test_showScanLines(self):
+        pts = self.getLidarPoints()
+        scan_lines = self.icpContainer.getScanLines(pts, np.array([0,0,0]))
+
+
+        self.renderer.addPoints(pts)
+        lines = []
+        colors = []
+        for start, end in scan_lines:
+            scan_points = pts[start:end]
+            line = self.icpContainer.connectPointsInOrder(scan_points)
+            lines.extend(line)
+            colors.extend(self.renderer.handleColors(line, self.randcolor()))
+            self.renderer.setLines(lines, colors)
+            time.sleep(0.1)
+
+
+    def test_projectLidarToSphere(self):
+        filenames = self.lidarDataReader.getfilenames()
+        pts1, cols1 = self.lidarDataReader.getPoints(filenames[0])
+        pts2, cols2 = self.lidarDataReader.getPoints(filenames[1])
+        pc = pts1 - np.array([0, 0, 0])
+
+        magnitudes = np.linalg.norm(pc, axis=1)
+        pc = pc / magnitudes[:, np.newaxis]
+
+        lines = self.icpContainer.connectPointsInOrder(pc)
+        self.renderer.addPoints(pc, np.array([1, 1, 1]))
+        self.renderer.setLines(lines)

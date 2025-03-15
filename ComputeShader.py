@@ -77,6 +77,8 @@ class ComputeShader:
         self.normal_shader = None
         self.point_plane_shader = None
 
+        self.main_shadercode_regex = "void main(){}"
+
         self.prepareBuffers()
         self.preparePrograms()
 
@@ -94,9 +96,10 @@ class ComputeShader:
 
         return code
 
+
     def preparePrograms(self):
         self.least_squares_point = self.create_shader_program(self.glslFile("LeastSquaresPoint.glsl"))
-        self.nearest_neighbour = self.create_shader_program(self.glslFile("NearestNeighbourScanV2.glsl"))
+        self.nearest_neighbour = self.create_shader_program(self.glslFile("NearestNeighbourScan.glsl"))
         self.normal_shader = self.create_shader_program(self.glslFile("NormalShader.glsl"))
         self.point_plane_shader = self.create_shader_program(self.glslFile("LeastSquaresPlane.glsl"))
 
@@ -115,10 +118,6 @@ class ComputeShader:
         self.points_b = np.zeros((self.maxPointsPerCloud, 4)).astype(np.float32)
         self.scan_lines = np.zeros((self.maxScans, 4)).astype(np.uint32)
         self.correspondences = np.zeros((self.maxPointsPerCloud, 4)).astype(np.float32)
-        """self.correspondences[0][0] = 1
-        self.correspondences[0][1] = 2
-        self.correspondences[0][2] = 3
-        self.correspondences[0][3] = 4"""
         self.Hs = np.zeros((self.maxPointsPerCloud, 8, 8)).astype(np.float32)
         self.Bs = np.zeros((self.maxPointsPerCloud, 8)).astype(np.float32)
         self.normals_a = np.zeros((self.maxPointsPerCloud, 4)).astype(np.float32)
@@ -389,11 +388,6 @@ class ComputeShader:
                            target_out.ctypes.data_as(c_void_p))
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
-        """
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_correspondence)
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, self.correspondences.nbytes,
-                           self.correspondences.ctypes.data_as(c_void_p))
-       """
 
 
     def saveUniformInfo(self, points_a, points_b, origin, scan_lines, debug_mode):
@@ -506,7 +500,7 @@ class ComputeShader:
 
         self.dispatchCurrentProgramWait(len(points_a))
 
-        # self.getBufferSubdata(self.ssbo_normals_a)
+        self.getBufferSubdata(self.ssbo_normals_a)
 
 
 
@@ -538,73 +532,32 @@ class ComputeShader:
         return self.hs_out, self.bs_out
 
     def prepareNNS(self, points_a, scan_lines, points_b, origin):
-        """self.program = self.create_shader_program(self.glslFile("NearestNeighbourScanV2.glsl"))"""
-        glUseProgram(self.nearest_neighbour)
-
-
-        self.ssbo_points_a = glGenBuffers(1)
-        self.ssbo_points_b = glGenBuffers(1)
-        self.ssbo_scan_lines = glGenBuffers(1)
-        self.ssbo_correspondence = glGenBuffers(1)
-
-        self.correspondences = np.zeros((len(points_b), 4)).astype(np.float32)
-
-        points_a = self.pad_points(points_a)
-        points_b = self.pad_points(points_b)
-
-
+        self.setActiveProgram(self.nearest_neighbour)
         scan_lines = np.array(scan_lines).astype(np.uint32)
         padded = np.ones((scan_lines.shape[0], 4), dtype=np.uint32)
         padded[:, :2] = scan_lines.astype(np.uint32)
         scan_lines = padded
 
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_points_a)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, points_a.nbytes, points_a, GL_STATIC_DRAW)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, self.ssbo_points_a)
+        self.bufferSubdata(points_a, self.ssbo_points_a)
 
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_points_b)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, points_b.nbytes, points_b, GL_DYNAMIC_DRAW)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, self.ssbo_points_b)
+        self.bufferSubdata(scan_lines, self.ssbo_scan_lines)
 
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_scan_lines)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, scan_lines.nbytes, scan_lines, GL_STATIC_DRAW)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, self.ssbo_scan_lines)
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_correspondence)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, self.correspondences.nbytes, self.correspondences, GL_DYNAMIC_DRAW)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, self.ssbo_correspondence)
-
-        self.origin_location = glGetUniformLocation(self.program, "origin")
-        self.origin = origin.astype(np.float32)
-        glUniform4fv(self.origin_location, 1, self.origin)
+        self.saveUniformInfo(points_a, points_b, origin, scan_lines, False)
 
 
     def dispatchNNS(self, points_b):
+        self.bufferSubdata(points_b, self.ssbo_points_b)
 
+        self.setCommonUniforms(self.nearest_neighbour)
 
+        self.dispatchCurrentProgramWait(len(points_b))
 
-        points_b = self.pad_points(points_b)
+        self.getBufferSubdata(self.ssbo_correspondence)
 
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_points_b)
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, points_b.nbytes, points_b)
+        corr_indexes = self.corr_out[:, 0].astype(np.uint32)
+        dists = self.corr_out[:, 1].astype(np.float32)
 
-        glUniform4fv(self.origin_location, 1, self.origin)
-
-
-        num_groups_x = int(np.ceil(len(points_b) / 64.0))
-        num_groups_y = 1  # int(np.ceil(len(scan_lines) / 32.0))
-        glDispatchCompute(num_groups_x, num_groups_y, 1)
-
-        glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT)
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_correspondence)
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, self.correspondences.nbytes,
-                           self.correspondences.ctypes.data_as(c_void_p))
-
-
-        # print(str(time.time() - st))
-
-        return self.correspondences
+        return corr_indexes, dists
 
 
 
@@ -634,7 +587,9 @@ class ComputeShader:
             self.deleteProgram(self.normal_shader)
             self.normal_shader = None
 
-
+        if self.point_plane_shader is not None:
+            self.deleteProgram(self.point_plane_shader)
+            self.point_plane_shader = None
 
         if self.window is not None:
             glfw.destroy_window(self.window)
@@ -642,13 +597,34 @@ class ComputeShader:
 
         # glfw.terminate()
 
+    def extend_functional_code(self, shader_code):
+        base_code = self.glslFile("FunctionalBase.glsl")
+
+        return base_code.replace(self.main_shadercode_regex, shader_code)
+
     def create_shader_program(self, shader_code):
-        program = glCreateProgram()
+        # test if base compiles
         shader = glCreateShader(GL_COMPUTE_SHADER)
+        base_code = self.glslFile("FunctionalBase.glsl")
+        glShaderSource(shader, base_code)
+        glCompileShader(shader)
+        if not glGetShaderiv(shader, GL_COMPILE_STATUS):
+            print("Unable to compile base shader")
+            raise RuntimeError(glGetShaderInfoLog(shader).decode())
+
+
+
+
+        shader_code = self.extend_functional_code(shader_code=shader_code)
+
+        program = glCreateProgram()
+
+
         glShaderSource(shader, shader_code)
         glCompileShader(shader)
 
         if not glGetShaderiv(shader, GL_COMPILE_STATUS):
+            print("Unable to compile complimentary shader")
             raise RuntimeError(glGetShaderInfoLog(shader).decode())
 
         glAttachShader(program, shader)
@@ -661,67 +637,3 @@ class ComputeShader:
         glDeleteShader(shader)  # Delete shader after linking
 
         return program
-
-
-
-
-
-
-    """def dispatchNeighbourMorton(self, all_sorted_mortons, all_sorted_points, b_mortons, b_points):
-        if self.program is None:
-            raise Exception("Program not set")
-
-        all_sorted_points = self.pad_points(all_sorted_points)
-        b_points = self.pad_points(b_points)
-
-        ssbo_sorted_mortons_a = glGenBuffers(1)
-        ssbo_sorted_points_a = glGenBuffers(1)
-        ssbo_mortons_b = glGenBuffers(1)
-        ssbo_points_b = glGenBuffers(1)
-
-        ssbo_correspondence = glGenBuffers(1)
-
-        correspondences = np.zeros_like(b_mortons).astype(np.uint32)
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_sorted_mortons_a)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, all_sorted_mortons.nbytes, all_sorted_mortons, GL_DYNAMIC_DRAW)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo_sorted_mortons_a)  # Binding index 0 for mortons
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_sorted_points_a)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, all_sorted_points.nbytes, all_sorted_points, GL_DYNAMIC_DRAW)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssbo_sorted_points_a)  # Binding index 1 for points
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_mortons_b)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, b_mortons.nbytes, b_mortons, GL_DYNAMIC_DRAW)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssbo_mortons_b)  # Binding index 0 for mortons
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_points_b)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, b_points.nbytes, b_points, GL_DYNAMIC_DRAW)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssbo_points_b)  # Binding index 1 for points
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_correspondence)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, correspondences.nbytes, correspondences, GL_DYNAMIC_DRAW)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssbo_correspondence)  # Binding index 1 for points
-
-
-
-        glUseProgram(self.program)
-        num_groups = int(np.ceil(len(b_points) / 64.0))
-        glDispatchCompute(num_groups, 1, 1)
-
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT)
-        glFinish()
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_correspondence)
-
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, correspondences.nbytes, correspondences.ctypes.data_as(c_void_p))
-
-        glDeleteBuffers(1, [ssbo_sorted_mortons_a])
-        glDeleteBuffers(1, [ssbo_sorted_points_a])
-        glDeleteBuffers(1, [ssbo_points_b])
-        glDeleteBuffers(1, [ssbo_mortons_b])
-        glDeleteBuffers(1, [ssbo_correspondence])
-
-
-        return correspondences
-    """

@@ -7,12 +7,11 @@ from datetime import datetime
 import numpy as np
 
 from OXTS import OXTS
-from utils import UNDEFINED
 
 
 class OxtsDataReader:
 
-    root = UNDEFINED
+    root = "UNDEFINED"
     currentName = 0
 
     datamap = {}

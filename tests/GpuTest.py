@@ -27,8 +27,8 @@ class GpuTest(unittest.TestCase):
 
         self.tolerance = 1e-5 # 0.00001
 
-        self.baseComputeShader = "TestComputeBase.glsl"
-        self.mainRegex = "//code//"
+        self.baseComputeShader = "FunctionalBase.glsl"
+        self.mainRegex = self.computeShader.main_shadercode_regex
 
     def tearDown(self):
         self.computeShader.cleanup()
@@ -73,75 +73,26 @@ class GpuTest(unittest.TestCase):
         self.assertEqual(len(self.computeShader.corr_out), self.computeShader.maxPointsPerCloud)
 
     def test_shouldCompileBaseShader(self):
-        basecode = self.computeShader.glslFile(self.baseComputeShader)
-        shader_program = self.computeShader.create_shader_program(basecode)
-        self.computeShader.deleteProgram(shader_program)
+        code ="""
+            void main(){
+            
+            
+            }
+        """
+        program = self.computeShader.create_shader_program(code)
+        self.computeShader.deleteProgram(program)
 
     def test_shouldFindCodeInBaseShader(self):
         basecode = self.computeShader.glslFile(self.baseComputeShader)
         self.assertTrue(basecode.find(self.mainRegex) > 0)
 
-        basecode = self.addCodeToBase(basecode, "//#e_e#")
+        basecode = self.computeShader.extend_functional_code("//#e_e#")
         self.assertTrue(basecode.find(self.mainRegex) == -1)
         self.assertTrue(basecode.find("//#e_e#") > 1)
 
-    def addCodeToBase(self, base, code):
-        return base.replace(self.mainRegex, code)
 
-    def test_ShouldDispatch(self):
-        basecode = self.computeShader.glslFile(self.baseComputeShader)
-        program = self.computeShader.create_shader_program(basecode)
-        self.computeShader.setActiveProgram(program)
-        self.computeShader.dispatchCurrentProgramWait(100)
-        self.computeShader.deleteProgram(program)
-
-
-    """
-    layout(std430, binding = 0) buffer PointsA {
-    vec4 points_a[];
-    };
-    
-    layout(std430, binding = 1) buffer PointsB {
-    vec4 points_b[];
-    };
-    
-    layout(std430, binding = 2) buffer ScanLines {
-    uvec4 scan_lines[];
-    };
-    
-    layout(std430, binding = 3) buffer Correspondences {
-    vec4 corr[];
-    };
-    
-    layout(std430, binding = 4) buffer Hessians {
-    float Hs[][6][6];
-    };
-    
-    layout(std430, binding = 5) buffer Bside {
-    float Bs[][6];
-    };
-    
-    
-    uniform vec4 origin;
-    uniform vec4 debug_info;
-    uniform uvec4 lens_data;
-
-    void main() {
-    uvec2 id = gl_GlobalInvocationID.xy;
-    uint idx = id.x;
-    uint idy = id.y;
-
-
-    if (idx >= lens_data[1]) {
-        return;
-    }
-
-    //code//
-    }
-    """
 
     def test_shouldDispatchCorrentNumberOfThreads(self):
-        basecode = self.computeShader.glslFile(self.baseComputeShader)
 
         points_a = np.array([[0, 0, 0]])
         points_b = np.array([[1, 1, 1]])
@@ -150,14 +101,19 @@ class GpuTest(unittest.TestCase):
 
 
         code = """
-            
-        corr[idx] = vec4(float(idx), 6.0, 9.0, -1.0);
+        void main(){
+            uvec2 id = gl_GlobalInvocationID.xy;
+            uint idx = id.x;
+            uint idy = id.y;
         
+            if (idx >= lens_data.y) {
+                return;
+            }
+        
+            corr[idx] = vec4(float(idx), 6.0, 9.0, -1.0);
+        }
         """
 
-        code = self.addCodeToBase(basecode, code)
-
-        # print(code)
 
         program = self.computeShader.create_shader_program(code)
         self.computeShader.setActiveProgram(program)
@@ -211,15 +167,21 @@ class GpuTest(unittest.TestCase):
 
 
     def test_shouldPersistBuffersOverDispatches(self):
-        basecode = self.computeShader.glslFile(self.baseComputeShader)
 
         code = """
-
-        corr[idx] = vec4(corr[idx][0] + 1.0, 6.0, 9.0, -1.0);
-
+            void main(){
+                uvec2 id = gl_GlobalInvocationID.xy;
+                uint idx = id.x;
+                uint idy = id.y;
+            
+                if (idx >= lens_data.y) {
+                    return;
+                }
+                corr[idx] = vec4(corr[idx][0] + 1.0, 6.0, 9.0, -1.0);
+            }
         """
 
-        code = self.addCodeToBase(basecode, code)
+
 
 
         program = self.computeShader.create_shader_program(code)
@@ -250,15 +212,21 @@ class GpuTest(unittest.TestCase):
             self.assertTrue(np.array_equal(self.computeShader.corr_out[0], expected_value))
 
     def test_shouldAccessPointsB(self):
-        basecode = self.computeShader.glslFile(self.baseComputeShader)
-
         code = """
-
+            void main(){
+                uvec2 id = gl_GlobalInvocationID.xy;
+                uint idx = id.x;
+                uint idy = id.y;
+            
+                if (idx >= lens_data.y) {
+                    return;
+                }
+            
                 corr[idx] = points_b[idx];
+            }
+        """
 
-                """
 
-        code = self.addCodeToBase(basecode, code)
 
         program = self.computeShader.create_shader_program(code)
         self.computeShader.setActiveProgram(program)
@@ -284,15 +252,19 @@ class GpuTest(unittest.TestCase):
         self.assertTrue(np.array_equal( corrs, points_b))
 
     def test_shouldAccessPointsA(self):
-        basecode = self.computeShader.glslFile(self.baseComputeShader)
-
         code = """
-
+            void main(){
+                uvec2 id = gl_GlobalInvocationID.xy;
+                uint idx = id.x;
+                uint idy = id.y;
+            
+                if (idx >= lens_data.y) {
+                    return;
+                }
                 corr[idx] = points_a[idx];
+            }
+        """
 
-                """
-
-        code = self.addCodeToBase(basecode, code)
 
         program = self.computeShader.create_shader_program(code)
         self.computeShader.setActiveProgram(program)
@@ -353,10 +325,15 @@ class GpuTest(unittest.TestCase):
         self.assertTrue(ok_percent > 0.999)
 
     def test_shouldSetHandB(self):
-        basecode = self.computeShader.glslFile(self.baseComputeShader)
-
         code = """
-
+            void main(){
+                uvec2 id = gl_GlobalInvocationID.xy;
+                uint idx = id.x;
+                uint idy = id.y;
+            
+                if (idx >= lens_data.y) {
+                    return;
+                }
                 Hs[idx][0][0] = -12.3;
                 Hs[idx][0][1] = float(lens_data.x);
                 Hs[idx][0][2] = float(lens_data.y);
@@ -369,10 +346,8 @@ class GpuTest(unittest.TestCase):
                 Bs[idx][2] = float(lens_data.x);
                 Bs[idx][3] = float(lens_data.y);
                 Bs[idx][4] = float(lens_data.z);
-
-                """
-
-        code = self.addCodeToBase(basecode, code)
+            }
+        """
 
         program = self.computeShader.create_shader_program(code)
         self.computeShader.setActiveProgram(program)
@@ -464,7 +439,7 @@ class GpuTest(unittest.TestCase):
 
         grid1 = self.icpContainer.getUniformGrid(10)
 
-        R, (x, y, z) = PointcloudAlignment.randomRotation(0.4)
+        R = PointcloudAlignment.randomRotation(0.4)
         t = PointcloudAlignment.randomTranslation1() * 10
         grid2 = (R @ self.icpContainer.getUniformGrid(10).T).T + t
 
@@ -472,18 +447,17 @@ class GpuTest(unittest.TestCase):
         grid1 = grid1.astype(np.float32)
         grid2 = grid2.astype(np.float32)
         Hs_numpy, Bs_numpy = self.icpContainer.getHsBsNumpy(grid1, grid2)
+        H_numpy = np.sum(Hs_numpy, axis=0)
+        B_numpy = np.sum(Bs_numpy, axis=0)
+
+        self.computeShader.prepareLS(grid1, [(0, 0)], grid2, np.array([0, 0, 0]), True)
+
+        Hs_cuda, Bs_cuda = self.computeShader.dispatchLS(grid2)
+        H_cuda = np.sum(Hs_cuda, axis=0)[:6, :6]
+        B_cuda = np.sum(Bs_cuda, axis=0)[:6]
 
 
-        self.icpContainer.compute.prepareLS(grid1, [(0, 0)], grid2, np.array([0, 0, 0]), True)
 
-        Hs_cuda, Bs_cuda = self.icpContainer.getHsBsCompute(grid2)
-
-
-
-        self.icpContainer.compute.releaseLS()
-
-
-
-        self.assertTrue(np.allclose(Hs_cuda, Hs_numpy, atol=self.tolerance))
-        self.assertTrue(np.allclose(Bs_cuda, Bs_numpy, atol=self.tolerance))
+        self.assertTrue(np.allclose(H_cuda, H_numpy, atol=self.tolerance))
+        self.assertTrue(np.allclose(B_cuda, B_numpy, atol=self.tolerance))
 

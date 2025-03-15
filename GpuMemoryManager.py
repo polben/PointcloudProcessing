@@ -66,22 +66,14 @@ class GpuMemoryManager:
             current_start, current_end = self.allocationIndexes[i]
             next_start, next_end = self.allocationIndexes[i + 1]
 
-            # Check for a gap between two blocks
             gap = next_start - current_end
-            if gap > 0:  # There is free space between the current block and the next block
-                # Move the next block into the gap
+            if gap > 0:
                 size_to_move = next_end - next_start
 
-                # Shift the next block to the gap
                 self.allocationIndexes[i + 1] = (current_end, current_end + size_to_move)
-
-                # Copy the points data to the new location
                 self.points[current_end:current_end + size_to_move] = self.points[next_start:next_end]
+                self.points[next_start:next_end] = np.zeros((next_end - next_start, 6))
 
-                # Zero out the original location of the moved block
-                self.points[next_start:next_end] = np.zeros((next_end - next_start, 3))
-
-                # Exit after moving the first block (one reallocation per defragmentStep call)
                 return True
 
         return False

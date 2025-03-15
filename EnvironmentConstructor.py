@@ -43,7 +43,7 @@ class EnvironmentConstructor:
 
         return lidar_points
 
-    def calculateTransition(self, current_lidar):
+    def calculateTransition(self, current_lidar, point_to_plane=True):
 
         points, colors = current_lidar
         if self.prev_points is None:
@@ -64,8 +64,17 @@ class EnvironmentConstructor:
             estimated_rotation = self.angular_velocity @ self.prev_rotation
             translated_points = (estimated_rotation @ points.T).T + self.prev_position + self.prev_velocity
 
-            t_opt, R_opt = self.icp.full_ls(self.prev_points, translated_points, self.prev_position, iterations=20, renderer=self.renderer)
-            # t_opt, R_opt = self.icp.full_ls(self.prev_points, translated_points, self.prev_position, iterations=20, renderer=None)
+            if point_to_plane:
+                t_opt, R_opt = self.icp.full_pt2pl(self.prev_points, translated_points, self.prev_position, iterations=20, renderer=self.renderer)
+            else:
+                t_opt, R_opt = self.icp.full_pt2pt(self.prev_points, translated_points, self.prev_position, iterations=20, renderer=self.renderer)
+
+            """if point_to_plane:
+                t_opt, R_opt = self.icp.full_pt2pl(self.prev_points, translated_points, self.prev_position,
+                                                   iterations=20)
+            else:
+                t_opt, R_opt = self.icp.full_pt2pt(self.prev_points, translated_points, self.prev_position,
+                                                   iterations=20)"""
 
             corrected_lidar_points = (R_opt @ translated_points.T).T - t_opt
             self.prev_points = corrected_lidar_points

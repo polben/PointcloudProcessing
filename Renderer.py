@@ -198,7 +198,7 @@ class Renderer:
         glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm.value_ptr(self.view))
         glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm.value_ptr(self.projection))
 
-    def addPoints(self, np_points, colors=None):
+    def handleColors(self, np_points, colors):
         if colors is not None:
             colors = np.array(colors)
 
@@ -219,6 +219,11 @@ class Renderer:
         else:
             if colors[0][0] > 1 or colors[0][1] > 1 or colors[0][2] > 1:
                 colors = colors / 255.0
+                colors = colors.astype(np.float32)
+
+        return colors
+    def addPoints(self, np_points, colors=None):
+        colors = self.handleColors(np_points, colors)
 
         with self.lock:
             self.vbo_update_needed = True
@@ -238,16 +243,9 @@ class Renderer:
 
         line_points = np.array(np_line_points).astype(np.float32)
 
-        if color is None:
-            line_colors = np.tile(np.array([1, 1, 1]), (len(np_line_points), 1)).astype(np.float32)
-        else:
-            line_colors = np.array(color).astype(np.float32)
+        colors = self.handleColors(np_line_points, color)
 
-            if line_colors[0][0] > 1:
-                line_colors /= 255.0
-
-
-        self.lineVertices = np.hstack([line_points, line_colors])
+        self.lineVertices = np.hstack([line_points, colors])
 
 
     def createShaderProgram(self, V_shader, G_shader, F_shader): #V_ertex shader, F_ragment shader

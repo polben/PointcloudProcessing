@@ -4,12 +4,11 @@ from datetime import datetime
 
 import numpy as np
 
-from utils import UNDEFINED
 from PIL import Image
 
 class LidarDataReader:
 
-    root = UNDEFINED
+    root = "UNDEFINED"
     currentName = 0
     datamap = {}
     timestamps = []

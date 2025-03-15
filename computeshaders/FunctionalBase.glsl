@@ -2,9 +2,6 @@
 
 layout(local_size_x = 64) in;
 
-//layout(local_size_x = 32, local_size_y = 32) in;
-
-// Declare input buffers (SSBOs)
 layout(std430, binding = 0) buffer PointsA {
     vec4 points_a[];
 };
@@ -21,7 +18,26 @@ layout(std430, binding = 3) buffer Correspondences {
     vec4 corr[];
 };
 
+layout(std430, binding = 4) buffer Hessians {
+    float Hs[][8][8];
+};
+
+layout(std430, binding = 5) buffer Bside {
+    float Bs[][8];
+};
+
+layout(std430, binding = 6) buffer NormalsA {
+    vec4 normals_a[];
+};
+
+layout(std430, binding = 7) buffer NormalsB {
+    vec4 normals_b[];
+};
+
 uniform vec4 origin;
+uniform vec4 debug_info;
+uniform uvec4 lens_data;
+
 
 vec4 projectSpherePoint(vec4 point){
     float lidar_tall = 0.254;
@@ -83,7 +99,7 @@ uint naiveClosest(vec3 point){
     uint closestIndex = 0;
     float minDist = 1.23e20;
 
-    for(uint i = 0; i < points_a.length(); i++){
+    for(uint i = 0; i < lens_data.x; i++){
         float dist = dot(vec3(points_a[i]) - point, vec3(points_a[i]) - point);
         if(dist < minDist){
             closestIndex = i;
@@ -105,13 +121,11 @@ float distsq(vec4 a, vec4 b){
 int findClosestScanLine(vec4 refpoint){
     float height = projectSpherePoint(refpoint).y;
 
-    int low = 0;
-    int high = scan_lines.length() - 1;
     int closest = 0;
 
     float minhdiff = 1.23e20;
 
-    for (int i = 0; i <= high; i++){
+    for (int i = 0; i < int(lens_data.z); i++){
         int begin = int(scan_lines[i][0]);
 
         vec4 ap = projectSpherePoint(points_a[begin]);
@@ -122,26 +136,6 @@ int findClosestScanLine(vec4 refpoint){
             closest = i;
         }
     }
-    /*while(low < high){
-        int mid = (low + high) / 2;
-        int scanindex = mid;
-
-        int begin = int(scan_lines[scanindex][0]);
-
-        vec4 ap = projectSpherePoint(points_a[begin]);
-
-        float htdiff = abs(ap.y - height);
-        if (htdiff < minhdiff){
-            minhdiff = htdiff;
-            closest = scanindex;
-        }
-
-        if (ap[1] > height){
-            low = mid + 1;
-        }else{
-            high = mid;
-        }
-    }*/
 
     return closest;
 }
@@ -152,7 +146,7 @@ vec2 binsearchAndCheck(int scanLine, vec4 refPoint){
     int closest = binaryScanCircleSearch(begin, end, refPoint);
 
 
-    int check = 100;
+    int check = 10;
     int circlen = end - begin + 1;
     int index = closest - begin;
 
@@ -171,38 +165,24 @@ vec2 binsearchAndCheck(int scanLine, vec4 refPoint){
     return vec2(float(closest), float(mindist));
 }
 
-void main() {
-    uvec2 id = gl_GlobalInvocationID.xy;
-    uint idx = id.x;
-    uint idy = id.y;
+int findClosestPoint(vec4 refpoint){
+    float mind = 1.23e20;
+    int glob_closest = 0;
 
-    if (idx >= points_b.length()) {
-        return;
-    }
+    for (int i = 0; i < int(lens_data.z); i++) {
 
+        vec2 closest = binsearchAndCheck(i, refpoint);
 
-
-    vec4 refPoint = points_b[idx];
-
-    int closest_scan = findClosestScanLine(refPoint);
-    int scans_to_check = 2;
-
-    float minDist = 1.23e20;
-    int minind = 0;
-    for (int i = max(0, closest_scan - scans_to_check); i <= min(scan_lines.length() - 1, closest_scan + scans_to_check); i++){
-        vec2 res = binsearchAndCheck(i, refPoint);
-        if(res.y < minDist){
-            minDist = res.y;
-            minind = int(res.x);
+        if (closest.y < mind){
+            mind = closest.y;
+            glob_closest = int(closest.x);
         }
     }
 
-
-
-
-    corr[idx][0] = float(minind);
-    corr[idx][1] = minDist;
-
-
-
+    return glob_closest;
 }
+
+
+
+
+void main(){}
