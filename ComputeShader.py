@@ -1,6 +1,7 @@
 import time
 from ctypes import c_void_p
 
+import OpenGL.error
 from OpenGL.GL import *
 import glfw
 
@@ -9,7 +10,7 @@ import numpy as np
 
 class ComputeShader:
 
-    def __init__(self, maxPointsPerCloud=200000, maxScans=200):
+    def __init__(self, maxPointsPerCloud=200000, maxScans=500):
 
 
 
@@ -449,8 +450,13 @@ class ComputeShader:
 
         self.bufferSubdata(points_a, self.ssbo_points_a)
 
-        self.bufferSubdata(scan_lines, self.ssbo_scan_lines)
+        try:
+            self.bufferSubdata(scan_lines, self.ssbo_scan_lines)
+        except OpenGL.error.GLError as e:
+            a = scan_lines
 
+            print("ERRORZ")
+            raise e
 
 
         self.saveUniformInfo(points_a, points_b, origin, scan_lines, debug_mode)
@@ -489,7 +495,13 @@ class ComputeShader:
 
         self.bufferSubdata(points_a, self.ssbo_points_a)
 
-        self.bufferSubdata(scan_lines, self.ssbo_scan_lines)
+        try:
+            self.bufferSubdata(scan_lines, self.ssbo_scan_lines)
+        except OpenGL.error.GLError as e:
+            a = scan_lines
+
+            print("ERRORZ: scan line count:" + str(len(scan_lines)))
+            raise e
 
         self.setUniform(self.normal_shader, "origin", origin)
 
@@ -533,10 +545,8 @@ class ComputeShader:
 
     def prepareNNS(self, points_a, scan_lines, points_b, origin):
         self.setActiveProgram(self.nearest_neighbour)
-        scan_lines = np.array(scan_lines).astype(np.uint32)
-        padded = np.ones((scan_lines.shape[0], 4), dtype=np.uint32)
-        padded[:, :2] = scan_lines.astype(np.uint32)
-        scan_lines = padded
+
+        scan_lines = self.padScanlines(scan_lines, points_a)
 
         self.bufferSubdata(points_a, self.ssbo_points_a)
 

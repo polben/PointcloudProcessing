@@ -49,8 +49,8 @@ void main() {
     int minind = findClosestPoint(refPoint);
     minDist = distsq(refPoint, points_a[minind]);
 
-    /*
-    int minind = 0;
+
+    /*int minind = 0;
     int min_scan = 0;
 
 
@@ -70,7 +70,7 @@ void main() {
 
     vec4 normal = normals_a[minind];
 
-    float outlierError = 1;
+    float outlierError = 0.1;
 
     vec3 p1 = vec3(points_a[minind]);
     vec3 p2 = vec3(refPoint);

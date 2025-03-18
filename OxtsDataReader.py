@@ -161,7 +161,7 @@ class OxtsDataReader:
         if self.currentName < len(self.datamap.keys()) - 1:
             return self.getfilenames()[self.currentName + 1]
         else:
-            return UNDEFINED
+            return "UNDEFINED"
 
     def getOriginOx(self):
         return self.datamap[ list(self.datamap.keys())[0] ]

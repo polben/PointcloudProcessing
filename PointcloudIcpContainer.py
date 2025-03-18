@@ -2,6 +2,7 @@ import time
 from math import atan2
 
 import numpy as np
+import numpy.linalg
 
 from scipy.spatial import KDTree
 
@@ -38,10 +39,16 @@ class PointcloudIcpContainer:
 
     def dispatchPointToPlane(self, points_b):
         Hs, Bs = self.compute.dispatchPointPlane(points_b)
-        H = np.sum(Hs, axis=0)[:6, :6]
-        b = np.sum(Bs, axis=0)[:6]
+        H = np.nansum(Hs, axis=0)[:6, :6]
+        b = np.nansum(Bs, axis=0)[:6]
 
-        delta_x = np.linalg.solve(H, -b)
+        try:
+            delta_x = np.linalg.solve(H, -b)
+        except numpy.linalg.LinAlgError as e:
+            print("failed to solve for transition")
+            print(H)
+            print(b)
+            a = 0
         t, R = delta_x[:3], delta_x[3:]
         return t, PointcloudAlignment.rotation(R[0], R[1], R[2])
 

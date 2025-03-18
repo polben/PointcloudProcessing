@@ -75,7 +75,7 @@ class OXTS:
         return np.array([self.velNorth, 0, self.velEast])
 
     def getVelocity(self):
-        return np.array([self.velLeft, 0, self.velForward])
+        return np.array([self.velLeft, self.velUp, self.velForward])
 
     def getAcceleration(self):
         gravity = np.array([0, 9.80665, 0])
@@ -86,7 +86,8 @@ class OXTS:
         return originMatrix @ OXTS.rotation(0, self.yaw, 0)
 
     def getTrueRotation(self, originMatrix):
-        return originMatrix @ OXTS.rotation(self.pitch, self.yaw, self.roll)
+        return originMatrix @ OXTS.rotation(self.pitch, 0, self.roll)
+        # return originMatrix @ OXTS.rotation(self.pitch, self.roll, self.yaw)
 
 
 

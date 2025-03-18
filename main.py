@@ -1,3 +1,5 @@
+import time
+
 from ComputeShader import ComputeShader
 from EnvironmentConstructor import EnvironmentConstructor
 from LidarDataReader import LidarDataReader
@@ -12,7 +14,7 @@ import numpy as np
 from Voxelizer import VoxelData
 
 
-path = "F://uni//3d-pointcloud//2011_09_26_drive_0005_sync"
+path1 = "F://uni//3d-pointcloud//2011_09_26_drive_0005_sync"
 pathOxts = "F://uni//3d-pointcloud//2011_09_26_drive_0005_sync"
 
 path2 = "F://uni//3d-pointcloud//samle1"
@@ -21,10 +23,10 @@ path3 = "F://uni//3d-pointcloud//sample2"
 calibration = "F://uni//3d-pointcloud//2011_09_26_calib//2011_09_26"
 
 
-display = path
+display = path1
 
 oxtsDataReader = OxtsDataReader(display)
-lidarDataReader = LidarDataReader(path=display, oxtsDataReader=oxtsDataReader, calibration=calibration, targetCamera="02", max_read=100)
+lidarDataReader = LidarDataReader(path=display, oxtsDataReader=oxtsDataReader, calibration=calibration, targetCamera="02", max_read=200)
 
 pointcloudAlignment = PointcloudAlignment(lidarDataReader, oxtsDataReader)
 
@@ -42,11 +44,12 @@ computeShader = ComputeShader() # this has to be instantiated after the renderer
 icpContainer = PointcloudIcpContainer(computeShader, pointcloudAlignment)
 environmentConstructor = EnvironmentConstructor(renderer, oxtsDataReader, lidarDataReader, icpContainer)
 
-"""start_from = 0
-for i in range(5):
-    lidardata = environmentConstructor.getNextFrameData(start_from)
-    environmentConstructor.calculateTransition(lidardata, point_to_plane=True)
-    # time.sleep(1)"""
+start_from = 0
+until = lidarDataReader.count
+for i in range(until - start_from):
+    lidardata, oxts = environmentConstructor.getNextFrameData(start_from)
+    environmentConstructor.calculateTransition_imu(lidardata, oxts, point_to_plane=True, debug=False, iterations=20, cullColors=True)
+    # time.sleep(0.1)
 
 
 

@@ -39,7 +39,7 @@ class LidarDataReader:
         self.R_velo_to_cam, self.t_velo_to_cam = self.getVeloToCam(self.calibrationPath)
         self.proj, self.rect_00, self.c2c_rot = self.getCameraCalibration(self.calibrationPath)
 
-        count = 0
+        self.count = 0
 
         self.MAX_DATA_READ = max_read
         self.DEFAULT_COLOR = np.array([255, 178, 102])
@@ -55,7 +55,7 @@ class LidarDataReader:
             if filename.endswith(".bin"):
                 np_points = self.eatBytes(filename)
                 image = self.readImage(filename.strip(".bin") + ".png")
-                np_points = self.filter_points(np_points)
+                # np_points = self.filter_points(np_points)
 
 
                 rot = LidarDataReader.aligningRotation() # this actually is very close to the velo to cam rotation
@@ -77,11 +77,11 @@ class LidarDataReader:
                 # self.datamap[filename.strip('.bin')] = (points2d.T, self.timestamps[count], colors)
 
                 colors = self.createColors(points_3d, color_indexes, colors)
-                self.datamap[filename.strip('.bin')] = (points_3d, self.timestamps[count], colors)
-                count += 1
+                self.datamap[filename.strip('.bin')] = (points_3d, self.timestamps[self.count], colors)
+                self.count += 1
 
-            print(str(len(files)) + " / " + str(count))
-            if count >= self.MAX_DATA_READ:
+            print(str(len(files)) + " / " + str(self.count))
+            if self.count >= self.MAX_DATA_READ:
                 break
 
         if not len(self.datamap.keys()) == len(self.timestamps):
@@ -206,7 +206,7 @@ class LidarDataReader:
     def getNextWait(self):
         currentTimestamp = self.datamap[self.getCurrentName()][1]
         nextFrame = self.peekNextName()
-        if nextFrame == UNDEFINED:
+        if nextFrame == "UNDEFINED":
             return 0
 
         nextTimestamp = self.datamap[nextFrame][1]
@@ -246,7 +246,7 @@ class LidarDataReader:
         if self.currentName < len(self.datamap.keys()) - 1:
             return self.getfilenames()[self.currentName + 1]
         else:
-            return UNDEFINED
+            return "UNDEFINED"
 
     def getNextName(self):
         names = self.getfilenames()
