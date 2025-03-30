@@ -5,18 +5,17 @@ from datetime import datetime
 import numpy as np
 
 from PIL import Image
+from scipy.constants import point
+
 
 class LidarDataReader:
 
-    root = "UNDEFINED"
-    currentName = 0
-    datamap = {}
-    timestamps = []
+
 
     VELODYNE_DATA = "//velodyne_points//data//"
     TIMESTAMPS = "//velodyne_points//timestamps.txt"
 
-    oxtsDataReader = None
+    DEFAULT_COLOR = np.array([255, 178, 102])
 
     def getRoot(self, path):
         files = os.listdir(path)
@@ -28,6 +27,11 @@ class LidarDataReader:
 
 
     def __init__(self, path, oxtsDataReader, calibration, targetCamera, max_read=10):
+        self.root = "UNDEFINED"
+        self.currentName = 0
+        self.datamap = {}
+        self.timestamps = []
+
         self.root = self.getRoot(path)
         self.oxtsDataReader = oxtsDataReader
         self.calibrationPath = calibration
@@ -42,7 +46,6 @@ class LidarDataReader:
         self.count = 0
 
         self.MAX_DATA_READ = max_read
-        self.DEFAULT_COLOR = np.array([255, 178, 102])
 
         self.timestamps = self.readTimestamps(self.root + self.TIMESTAMPS)
 
@@ -53,7 +56,15 @@ class LidarDataReader:
 
         for filename in files:
             if filename.endswith(".bin"):
-                np_points = self.eatBytes(filename)
+                np_points, intensities = self.eatBytes(filename)
+                # filter car artifacts
+                dists = np.linalg.norm(np_points, axis=1)
+                m = 2.5
+                np_points, intensities = np_points[dists > m], intensities[dists > m]
+
+
+
+
                 image = self.readImage(filename.strip(".bin") + ".png")
                 # np_points = self.filter_points(np_points)
 
@@ -77,7 +88,8 @@ class LidarDataReader:
                 # self.datamap[filename.strip('.bin')] = (points2d.T, self.timestamps[count], colors)
 
                 colors = self.createColors(points_3d, color_indexes, colors)
-                self.datamap[filename.strip('.bin')] = (points_3d, self.timestamps[self.count], colors)
+                int_cls = np.tile(intensities.T.reshape(-1, 1), 3)
+                self.datamap[filename.strip('.bin')] = (points_3d, self.timestamps[self.count], colors, int_cls)
                 self.count += 1
 
             print(str(len(files)) + " / " + str(self.count))
@@ -141,6 +153,7 @@ class LidarDataReader:
         mask = points2d[2] > 1e-6
         points2d = points2d[:, mask] / points2d[2][mask]
         indexes = indexes[mask]
+        depths = points2d[2]
 
         valid_in_image_mask = (
                 (points2d[0] >= 0) & (points2d[0] <= width) &  # x-coordinates
@@ -148,6 +161,7 @@ class LidarDataReader:
         )
         points2d = points2d[:, valid_in_image_mask]
         indexes = indexes[valid_in_image_mask]
+        depths = depths[valid_in_image_mask]
 
         points2d[1] = (self.height - 1) - points2d[1]
 
@@ -157,6 +171,28 @@ class LidarDataReader:
         colors = image[color_y, color_x]
 
         return indexes, colors, points2d
+        # return self.filterOnDepth(color_x, color_y, image, depths, indexes, points2d)
+
+    def filterOnDepth(self, pixel_x, pixel_y, image, depths, indexes, points2d):
+        pixel_indices = pixel_y * self.width + pixel_x  # Flattened pixel index
+        unique_pixels = {}
+
+        filtered_indexes = []
+        filtered_colors = []
+        filtered_points2d = []
+
+        for i in range(len(pixel_indices)):
+            px_idx = pixel_indices[i]
+            if px_idx not in unique_pixels or depths[i] < unique_pixels[px_idx][0]:
+                unique_pixels[px_idx] = (depths[i], i)  # Store depth & index
+
+        # Collect filtered points
+        for _, i in unique_pixels.values():
+            filtered_indexes.append(indexes[i])
+            filtered_colors.append(image[pixel_y[i], pixel_x[i]])
+            filtered_points2d.append(points2d[:, i])
+
+        return np.array(filtered_indexes), np.array(filtered_colors), np.array(filtered_points2d).T
 
     @staticmethod
     def aligningRotation():
@@ -190,7 +226,7 @@ class LidarDataReader:
             float_data = array.array('f', bin_data)
             numpy_array = np.frombuffer(float_data, dtype=np.float32)
             reshaped_array = numpy_array.reshape(-1, 4)
-        return reshaped_array[:, :3].astype(np.float64)
+        return reshaped_array[:, :3].astype(np.float32), reshaped_array[:, 3].astype(np.float32)
 
     def readImage(self, filename):
         with open(self.root + self.IMAGES + filename, "rb") as f:
@@ -217,6 +253,10 @@ class LidarDataReader:
 
     def getPoints(self, filename):
         return np.ascontiguousarray(self.datamap[filename][0]), np.ascontiguousarray(self.datamap[filename][2]) # the actual points,
+
+    def getPointsWithIntensities(self, filename):
+        return np.ascontiguousarray(self.datamap[filename][0]), np.ascontiguousarray(self.datamap[filename][2]), self.datamap[filename][3] # the actual points,
+
 
     def getTimeStamp(self, filename):
         return self.datamap[filename][1] # the timestamp

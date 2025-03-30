@@ -51,7 +51,7 @@ void main() {
 
     if (debug_info[0] < 1.0) {
 
-        minind = findClosestPoint(refPoint);
+        minind = findClosestPoint(refPoint, idx);
         minDist = distsq(refPoint, points_a[minind]);
         /*int closest_scan = findClosestScanLine(refPoint);
         int scans_to_check = 10;

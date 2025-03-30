@@ -140,6 +140,7 @@ int findClosestScanLine(vec4 refpoint){
     return closest;
 }
 
+
 vec2 binsearchAndCheck(int scanLine, vec4 refPoint){
     int begin = int(scan_lines[scanLine][0]);
     int end = int(scan_lines[scanLine][1]);
@@ -165,17 +166,72 @@ vec2 binsearchAndCheck(int scanLine, vec4 refPoint){
     return vec2(float(closest), float(mindist));
 }
 
-int findClosestPoint(vec4 refpoint){
+
+int fullBinary(vec4 refpoint){
+    int scansLen_m1 = int(lens_data.z) - 1;
+    int upperScan = 0;
+    int lowerScan = scansLen_m1;
+
+    float targetHeight = projectSpherePoint(refpoint).y;
+    int prevmid = -1;
+    int mid = 0;
+
+    int closest_scan = 0;
+    while(prevmid != mid){
+        prevmid = mid;
+        mid = (lowerScan + upperScan) / 2;
+        int begin = int(scan_lines[mid][0]);
+
+
+        int global_idx_online_a = begin; //binaryScanCircleSearch(begin, end, refpoint);
+        float height = projectSpherePoint(points_a[global_idx_online_a]).y;
+        if (height < targetHeight){
+            lowerScan = mid;
+        }else{
+            upperScan = mid;
+        }
+        closest_scan = mid;
+    }
+
+
+    int scans_to_check = 1;
+
+    float minDist = 1.23e20;
+    int minind = 0;
+    for (int i = max(0, closest_scan - scans_to_check); i <= min(scansLen_m1, closest_scan + scans_to_check); i++){
+        vec2 res = binsearchAndCheck(i, refpoint);
+        if(res.y < minDist){
+            minDist = res.y;
+            minind = int(res.x);
+        }
+    }
+    return minind;
+}
+
+int findClosestPoint(vec4 refpoint, uint id){
     float mind = 1.23e20;
     int glob_closest = 0;
 
-    for (int i = 0; i < int(lens_data.z); i++) {
+    float last_scan_line = corr[id][3];
+
+
+    int from = 0;
+    int to = int(lens_data.z);
+
+    int scan_check_width = 2;
+    if (last_scan_line != -1.0){
+        from = max(0, int(last_scan_line) - scan_check_width);
+        to = min(int(lens_data.z), int(last_scan_line) + scan_check_width);
+    }
+
+    for (int i = from; i < to; i++) {
 
         vec2 closest = binsearchAndCheck(i, refpoint);
 
         if (closest.y < mind){
             mind = closest.y;
             glob_closest = int(closest.x);
+            corr[id][3] = float(i);
         }
     }
 

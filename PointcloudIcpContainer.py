@@ -34,11 +34,18 @@ class PointcloudIcpContainer:
         return t, PointcloudAlignment.rotation(R[0], R[1], R[2])
 
     def preparePointToPlane(self, points_a, origin, points_b):
+
+        st = time.time()
         scan_lines = self.getScanLines(points_a, origin)
+
         self.compute.preparePointPlane(points_a, scan_lines, points_b, origin, False)
+        # print("scan line and prep time: " + str(time.time() - st)) # ~0.1s
 
     def dispatchPointToPlane(self, points_b):
+        st = time.time()
         Hs, Bs = self.compute.dispatchPointPlane(points_b)
+        # print("dispatch time: " + str(time.time() - st))
+
         H = np.nansum(Hs, axis=0)[:6, :6]
         b = np.nansum(Bs, axis=0)[:6]
 
@@ -50,7 +57,10 @@ class PointcloudIcpContainer:
             print(b)
             a = 0
         t, R = delta_x[:3], delta_x[3:]
-        return t, PointcloudAlignment.rotation(R[0], R[1], R[2])
+        # print(delta_x)
+        delta_transf = np.mean(np.abs(delta_x))
+        # print(delta_transf)
+        return t, PointcloudAlignment.rotation(R[0], R[1], R[2]), delta_transf
 
     def full_pt2pt(self, aligned, to_align, origin, iterations = 20, renderer = None):
 
@@ -84,7 +94,7 @@ class PointcloudIcpContainer:
         return t_opt, R_opt
 
 
-    def full_pt2pl(self, aligned, to_align, origin, iterations = 20, renderer = None):
+    def full_pt2pl(self, aligned, to_align, origin, iterations = 20, renderer = None, full_iter = False):
 
         self.preparePointToPlane(aligned, origin, to_align)
 
@@ -96,18 +106,28 @@ class PointcloudIcpContainer:
             prev_pp = renderer.addPoints(to_align, np.array([0,0,255]))
             time.sleep(1)
 
+
         start = time.time()
+        c = 0
         for i in range(iterations):
-            t, R = self.dispatchPointToPlane(to_align)
+            c += 1
+            t, R, delta_transf = self.dispatchPointToPlane(to_align)
+            if delta_transf < 1e-6 and not full_iter:
+                break
+
             to_align = self.apply_iteration_of_ls(to_align, t, R)
 
             if renderer is not None:
+                print(i)
                 if prev_pp is not None:
                     renderer.freePoints(prev_pp)
                 prev_pp = renderer.addPoints(to_align)
                 time.sleep(0.1)
 
             reference_grid = self.applyIcpStep(reference_grid, R, t)
+        print(c)
+        if renderer is not None:
+            renderer.freePoints(prev_pp)
 
         print("icp plane: " + str(time.time()-start))
 
@@ -119,6 +139,13 @@ class PointcloudIcpContainer:
 
         scan_lines = self.getScanLines(aligned, origin)
         self.compute.prepareLS(aligned, scan_lines, to_align, origin)
+
+    def prepareNNS(self, points_a, origin, points_b):
+        scan_lines = self.getScanLines(points_a, origin)
+        self.compute.prepareNNS(points_a, scan_lines, points_b, origin)
+
+    def dispatchNNS(self, points_b):
+        return self.compute.dispatchNNS(points_b)
 
     def iteration_of_ls(self, to_align):
         #st = time.time()
@@ -156,6 +183,7 @@ class PointcloudIcpContainer:
         H = np.sum(Hs, axis=0)
         b = np.sum(Bs, axis=0)
         return H, b
+
 
     def icp_step_LS_vector(self, aligned, to_align):
 
@@ -286,7 +314,12 @@ class PointcloudIcpContainer:
         return (R @ np_points.T).T + t # + mean
 
 
-
+    def zipPointsToLines(self, points1, points2):
+        minl = min(len(points1), len(points2)) - 1
+        zipped_arr = np.empty((2 * minl, 3), dtype=points1.dtype)
+        zipped_arr[0::2] = points1[:minl]  # Even indices
+        zipped_arr[1::2] = points2[:minl]  # Odd indices
+        return zipped_arr
 
 
     def uniform_optimal_icp(self, grid1, grid2):
@@ -331,7 +364,7 @@ class PointcloudIcpContainer:
             scan_lines.append((index, end_index))
             index = end_index + 1
 
-        # print(len(scan_lines))
+        # print("scans out of algo: " + str(len(scan_lines)))
         return scan_lines
 
 

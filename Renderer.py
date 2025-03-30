@@ -28,7 +28,7 @@ class Renderer:
 
     defaultColor = np.array([64, 224, 208]) / 255.0
 
-    def __init__(self, voxelSize, maxNumberOfPoints=7000000):
+    def __init__(self, voxelSize, maxNumberOfPoints=10000000):
         self.buffer_capacity = 1024
         self.inited = False
 
@@ -448,3 +448,30 @@ class Renderer:
         # Destroy Window & Terminate GLFW
         glfw.destroy_window(self.window)
         glfw.terminate()
+
+    @staticmethod
+    def unitCube():
+        return [
+            (0.5, 0.5, 0.5),
+            (0.5, 0.5, -0.5),
+            (0.5, -0.5, 0.5),
+            (0.5, -0.5, -0.5),
+            (-0.5, 0.5, 0.5),
+            (-0.5, 0.5, -0.5),
+            (-0.5, -0.5, 0.5),
+            (-0.5, -0.5, -0.5),
+        ]
+
+    @staticmethod
+    def unitCubeEdges(offset = np.array([0, 0, 0])):
+        vertices = Renderer.unitCube()
+        edges = [
+            vertices[0], vertices[1], vertices[0], vertices[2], vertices[0], vertices[4],
+            vertices[1], vertices[3], vertices[1], vertices[5],
+            vertices[2], vertices[3], vertices[2], vertices[6],
+            vertices[3], vertices[7],
+            vertices[4], vertices[5], vertices[4], vertices[6],
+            vertices[5], vertices[7],
+            vertices[6], vertices[7]
+        ]
+        return np.array(edges) + offset

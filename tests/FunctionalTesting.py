@@ -7,11 +7,12 @@ import numpy as np
 from ComputeShader import ComputeShader
 from EnvironmentConstructor import EnvironmentConstructor
 from LidarDataReader import LidarDataReader
+from OutlierFilter import OutlierFilter
 from OxtsDataReader import OxtsDataReader
 from PointcloudAlignment import PointcloudAlignment
 from PointcloudIcpContainer import PointcloudIcpContainer
 from Renderer import Renderer
-
+from Voxelizer import Voxelizer
 
 
 class FunctionalTesting(unittest.TestCase):
@@ -22,12 +23,12 @@ class FunctionalTesting(unittest.TestCase):
 
         self.oxtsDataReader = OxtsDataReader(path)
         self.lidarDataReader = LidarDataReader(path=path, oxtsDataReader=self.oxtsDataReader, calibration=calibration,
-                                          targetCamera="02", max_read=100)
+                                          targetCamera="02", max_read=10)
 
         self.pointcloudAlignment = PointcloudAlignment(self.lidarDataReader, self.oxtsDataReader)
 
-        VOXEL_SIZE = 0.01
-        self.renderer = Renderer(VOXEL_SIZE)
+        self.VOXEL_SIZE = 1
+        self.renderer = Renderer(self.VOXEL_SIZE)
         self.renderingThread = self.renderer.getRenderingThread()
 
         self.computeShader = ComputeShader()
@@ -378,7 +379,7 @@ class FunctionalTesting(unittest.TestCase):
         origin = np.array([0, 0, 0])
 
         frame1 = 0
-        frame2 = 2
+        frame2 = 1
 
         filenames = self.lidarDataReader.getfilenames()
 
@@ -411,7 +412,7 @@ class FunctionalTesting(unittest.TestCase):
         origin = np.array([0, 0, 0])
 
         key1 = 36
-        key2 = 40
+        key2 = 38
 
 
         pts1 = self.getLidarPoints(key1)
@@ -422,7 +423,7 @@ class FunctionalTesting(unittest.TestCase):
         pts2 += origin
 
         randrot = PointcloudAlignment.randomRotation(0.0001)
-        randtrans = PointcloudAlignment.randomTranslation1() * 0.0001
+        randtrans = PointcloudAlignment.randomTranslation1() * 0.001
 
         pts2 = (randrot @ pts2.T).T + randtrans
 
@@ -442,7 +443,7 @@ class FunctionalTesting(unittest.TestCase):
 
         for i in range(100):
             start = time.time()
-            t, R = self.icpContainer.dispatchPointToPlane(pts2)
+            t, R, delta_transf = self.icpContainer.dispatchPointToPlane(pts2)
             print("dispatch pointplane: " + str(time.time() - start))
 
             pts2 = self.icpContainer.apply_iteration_of_ls(pts2, t, R)
@@ -473,6 +474,72 @@ class FunctionalTesting(unittest.TestCase):
 
         self.renderer.freePoints(pp2)
         self.renderer.addPoints(pts2, np.array([255,0,0]))
+
+    def test_vectorizedSphereEqualManual(self):
+        self.assertTrue(False)
+
+    def test_binaryScanLineSearch(self):
+        def sphereProject(point, origin):
+            # icp sphere project point also takes into lidar height which seems off
+            v = point - origin
+            return v / np.linalg.norm(v)
+
+        def binHeightSearch(points_a, scan_lines, refp, origin):
+            uppen_scan = 0
+            lower_scan = len(scan_lines) - 1
+
+            target_height = self.icpContainer.sphereProjectPont(refp, origin)[1]
+
+            prevmid = -1
+            mid = 0
+            steps = 0
+            while prevmid != mid:
+                time.sleep(0.01)
+
+                prevmid = mid
+                mid = (lower_scan + uppen_scan) // 2
+
+                begin, end = scan_lines[mid]
+                pt_a = points_a[begin]
+
+                spherePoint = self.icpContainer.sphereProjectPont(pt_a, origin)
+                height = spherePoint[1]
+
+                self.renderer.setLines([origin, refp, origin, pt_a])
+                # print("step: " + str(steps))
+                if height < target_height:
+                    lower_scan = mid
+                else:
+                    uppen_scan = mid
+
+                steps += 1
+
+            return mid
+
+
+        pts = self.getLidarPoints(0)
+        origin = np.array([0, 0, 0])
+        self.renderer.addPoints(pts)
+        # sphere = self.icpContainer.sphereProjectPoints(pts, np.array([0,0,0]))
+        # self.renderer.addPoints(sphere)
+
+        scan_lines = self.icpContainer.getScanLines(pts, origin)
+
+        ok = 0
+        errors = 0
+        for i in range(len(scan_lines)):
+            target_scan = i
+
+            reference = pts[scan_lines[target_scan][0] + 500]
+
+            found_scan = binHeightSearch(pts, scan_lines, reference, origin)
+
+            if target_scan == found_scan:
+                ok += 1
+            else:
+                errors += 1
+                print(str(i) + " sl was error, found: " + str(found_scan))
+
 
 
     def test_findClosestPoint(self): # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -524,7 +591,7 @@ class FunctionalTesting(unittest.TestCase):
 
                 half = int(math.ceil(half *  1.0/2.0))
                 self.renderer.setLines(lines)
-                # time.sleep(0.1)
+                # time.sleep(0.3)
                 lines.pop()
                 lines.pop()
 
@@ -537,7 +604,7 @@ class FunctionalTesting(unittest.TestCase):
         points_b = self.getLidarPoints(1)
         origin = np.array([0,0,0])
 
-        refp = points_b[2000]
+        refp = np.array([5, 5, 0]).astype(np.float32)
 
         lines.extend([origin, refp])
 
@@ -551,7 +618,7 @@ class FunctionalTesting(unittest.TestCase):
         lines = []
 
         self.renderer.addPoints(points_a, None)
-        self.renderer.addPoints(points_b, None)
+        # self.renderer.addPoints(points_b, None)
 
 
 
@@ -562,10 +629,19 @@ class FunctionalTesting(unittest.TestCase):
 
 
     def test_showScanLines(self):
-        pts = self.getLidarPoints()
+        path = "F://uni//3d-pointcloud//sample2"
+
+        calibration = "F://uni//3d-pointcloud//2011_09_26_calib//2011_09_26"
+
+        oxtsDataReader = OxtsDataReader(path)
+        lidarDataReader = LidarDataReader(path=path, oxtsDataReader=oxtsDataReader, calibration=calibration,
+                                               targetCamera="02", max_read=50)
+
+        names = lidarDataReader.getfilenames()
+        pts, cols = lidarDataReader.getPoints(names[49])
+
         scan_lines = self.icpContainer.getScanLines(pts, np.array([0,0,0]))
-
-
+        # print(len(scan_lines))
         self.renderer.addPoints(pts)
         lines = []
         colors = []
@@ -588,7 +664,7 @@ class FunctionalTesting(unittest.TestCase):
 
         lines = self.icpContainer.connectPointsInOrder(pc)
         self.renderer.addPoints(pc, np.array([1, 1, 1]))
-        self.renderer.setLines(lines)
+        # self.renderer.setLines(lines)
 
 
     def test_shouldGetApproximatePath(self):
@@ -635,7 +711,7 @@ class FunctionalTesting(unittest.TestCase):
         prevtime = None
         currtime = self.oxtsDataReader.getOx(files[0]).getTime()
 
-        for i in range(10):
+        for i in range(4):
             name = files[i]
             oxts = self.oxtsDataReader.getOx(name)
             rot = np.linalg.inv(oxts.getTrueRotation(np.eye(3)))
@@ -657,9 +733,10 @@ class FunctionalTesting(unittest.TestCase):
             if ptr is not None:
                 # self.renderer.freePoints(ptr)
                 a=0
-            ptr = self.renderer.addPoints(pts)
+            _, cls, ints = self.lidarDataReader.getPointsWithIntensities(i)
+            ptr = self.renderer.addPoints(pts, ints)
 
-            time.sleep(0.123)
+            time.sleep(1)
 
             prevtime = currtime
             prevpos = currpos
@@ -708,3 +785,401 @@ class FunctionalTesting(unittest.TestCase):
             ptr = self.renderer.addPoints(pts)
             prev_time = ttime
             time.sleep(0.5)
+
+    def test_shouldGet64ScanLines(self):
+        path = "F://uni//3d-pointcloud//sample2"
+
+        calibration = "F://uni//3d-pointcloud//2011_09_26_calib//2011_09_26"
+
+        oxtsDataReader = OxtsDataReader(path)
+        lidarDataReader = LidarDataReader(path=path, oxtsDataReader=oxtsDataReader, calibration=calibration,
+                                          targetCamera="02", max_read=50)
+
+        names = lidarDataReader.getfilenames()
+
+        self.renderer.addPoints(lidarDataReader.getPoints(names[0])[0])
+        origin = np.array([0,0,0])
+        for i in range(50):
+            name = names[i]
+            pts, cols = lidarDataReader.getPoints(name)
+            sphere = self.icpContainer.sphereProjectPoints(pts + origin, origin) + origin * 10
+            self.renderer.addPoints(sphere)
+            scan_lines = self.icpContainer.getScanLines(pts + origin, origin)
+            print(len(scan_lines))
+            origin += np.array([1, 1, 0])
+
+
+    def test_shouldProjectIntoCameraSpace(self):
+        path = "F://uni//3d-pointcloud//2011_09_26_drive_0005_sync"
+
+        calibration = "F://uni//3d-pointcloud//2011_09_26_calib//2011_09_26"
+
+        oxtsDataReader = OxtsDataReader(path)
+        lidarDataReader = LidarDataReader(path=path, oxtsDataReader=oxtsDataReader, calibration=calibration,
+                                          targetCamera="02", max_read=10)
+
+        filenames = lidarDataReader.getfilenames()
+
+        name1 = filenames[0] + ".bin"
+
+        np_points, intensities  = lidarDataReader.eatBytes(name1)
+        image = lidarDataReader.readImage(name1.strip(".bin") + ".png")
+
+        lidar_to_view = lidarDataReader.R_velo_to_cam @ np_points.T
+        cam_0_points = lidar_to_view + lidarDataReader.t_velo_to_cam
+        cam_0_rect = lidarDataReader.rect_00 @ cam_0_points
+
+        color_indexes, colors, points2d = lidarDataReader.project_np(cam_0_rect.T, lidarDataReader.proj, lidarDataReader.width, lidarDataReader.height, image)
+        points2d = points2d.T * 0.001
+
+        # self.renderer.addPoints(points2d, colors)
+        pts, cls = lidarDataReader.getPoints(filenames[0])
+        self.renderer.addPoints(pts, cls)
+
+
+    """def test_shouldVoxelizePoints(self):
+        filenames = self.lidarDataReader.getfilenames()
+        pts, cols = self.lidarDataReader.getPoints(filenames[0])
+
+        voxelizer = Voxelizer(0.1)
+
+
+        voxelizer.addPoints(pts, cols)
+
+        v_pts, v_cls = voxelizer.getPoints()
+        self.renderer.addPoints(v_pts, v_cls)
+
+
+    def test_shouldVoxelizeSequence(self):
+        ptr = None
+        files = self.lidarDataReader.getfilenames()
+
+        prevpos = np.array([0, 0, 0])
+        currpos = np.array([0, 0, 0])
+        prevtime = None
+        currtime = self.oxtsDataReader.getOx(files[0]).getTime()
+
+        voxelizer = Voxelizer(self.renderer, voxelSize=self.VOXEL_SIZE, maxDensity=1000)
+
+        for i in range(10):
+            name = files[i]
+            oxts = self.oxtsDataReader.getOx(name)
+            rot = np.linalg.inv(oxts.getTrueRotation(np.eye(3)))
+            yawrot = oxts.getYawRotation(np.eye(3))
+            rot = yawrot @ rot
+
+            if prevtime is not None:
+                velocity = -oxts.getVelocity()
+                currtime = oxts.getTime()
+                deltatime = (currtime - prevtime).total_seconds()
+                velocity = (rot @ velocity.T).T
+
+                currpos = prevpos + velocity * deltatime
+
+
+            pts, cols = self.lidarDataReader.getPoints(files[i])
+            pts = (rot @ pts.T).T + currpos
+
+
+            voxelizer.addPoints(pts, cols)
+
+
+            time.sleep(0.5)
+
+            prevtime = currtime
+            prevpos = currpos"""
+
+    def getAlignedLidarPoints(self, num_scans):
+        files = self.lidarDataReader.getfilenames()
+
+        prevpos = np.array([0, 0, 0])
+        currpos = np.array([0, 0, 0])
+        prevtime = None
+        currtime = self.oxtsDataReader.getOx(files[0]).getTime()
+
+        aligned_points = []
+        positions = [np.array([0,0,0])]
+        rotations = []
+
+        load = num_scans
+        for i in range(load):
+            name = files[i]
+            oxts = self.oxtsDataReader.getOx(name)
+            rot = np.linalg.inv(oxts.getTrueRotation(np.eye(3)))
+            yawrot = oxts.getYawRotation(np.eye(3))
+            rot = yawrot @ rot
+
+            if prevtime is not None:
+                velocity = -oxts.getVelocity()
+                currtime = oxts.getTime()
+                deltatime = (currtime - prevtime).total_seconds()
+                velocity = (rot @ velocity.T).T
+
+                currpos = prevpos + velocity * deltatime
+                positions.append(currpos)
+
+            pts = self.getLidarPoints(i)
+            pts = (rot @ pts.T).T + currpos
+            rotations.append(rot)
+
+            aligned_points.append(pts)
+
+            prevtime = currtime
+            prevpos = currpos
+
+        return aligned_points, positions, rotations
+
+    def test_closestPointOutlier(self):
+        aligned_points, poses, rots = self.getAlignedLidarPoints(10)
+
+        outlier_filter = OutlierFilter(self.icpContainer, 1, 20)
+
+
+        for i in range(9):
+            reference = aligned_points[i]
+
+            next = aligned_points[i + 1]
+
+            start = time.time()
+            outliers = outlier_filter.temporalClosestPointOutliers(next, reference)
+            print("temp: " + str(time.time()-start))
+
+            v = self.renderer.addPoints(outliers)
+            time.sleep(1)
+            self.renderer.freePoints(v)
+
+
+            clusters = outlier_filter.getClusters(outliers)
+            added_clusters = []
+            for c in clusters:
+                added_clusters.append(self.renderer.addPoints(c, self.randcolor()))
+
+            time.sleep(10)
+
+            for a in added_clusters:
+                self.renderer.freePoints(a)
+
+    def test_showClusters(self):
+
+
+        pts = self.getLidarPoints()
+
+
+        outlier_filter = OutlierFilter(icpContainer=self.icpContainer, dbscan_eps=0.5, dbscan_minpt=10)
+
+        pts = Voxelizer.voxelGroundFilter(pts)
+
+        clusters_a = outlier_filter.getClusters(pts)
+
+        for c in clusters_a:
+            self.renderer.addPoints(c, self.randcolor())
+
+
+    def test_canAlignFilteredPoints(self):
+
+        of = OutlierFilter(self.icpContainer, 0.5, 20, 50, True, False)
+        ev = EnvironmentConstructor(self.renderer, self.oxtsDataReader, self.lidarDataReader, self.icpContainer)
+
+
+        aligned, poses, rots = self.getAlignedLidarPoints(10)
+        pc1, pc2, pc3 = aligned[0], aligned[1], aligned[2]
+
+
+        fp1 = ev.filterPoints(pc2, pc1)
+        fp2 = ev.filterPoints(pc3, pc2)
+        """fp1 = pc1
+        fp2 = pc2"""
+
+        self.renderer.addPoints(fp1, np.array([255,0 ,0 ]))
+
+
+        # fp2 += np.array([1, 0, 1])
+
+        t_opt, r_opt = ev.getRefinedTransition(fp1 , np.array([0,0,0]), fp2, 30, True, self.renderer, False)
+
+        fp2 = (r_opt @ fp2.T).T - t_opt
+
+        self.renderer.addPoints(fp2, np.array([0,255,0]))
+
+
+
+    def test_pointToPlane(self):
+        environmentConstructor = EnvironmentConstructor(self.renderer, self.oxtsDataReader, self.lidarDataReader, self.icpContainer)
+
+        start_from = 0
+        until = 50
+        for i in range(start_from, until):
+            lidardata, oxts = environmentConstructor.getNextFrameData(start_from)
+            environmentConstructor.calculateTransition_imu(lidardata,
+                                                           oxts,
+                                                           point_to_plane=True,
+                                                           debug=False,
+                                                           iterations=30,
+                                                           cullColors=False,
+                                                           removeOutliers=False,
+                                                           pure_imu=False)
+            # time.sleep(0.1)
+
+    def test_shouldCluster(self):
+        def randcolor():
+            r = np.random.rand(1, 3)[0]
+            return r
+
+
+
+
+        ptr = None
+
+        aligned_points, positions, rotations = self.getAlignedLidarPoints(30)
+
+
+
+        # for i in range(len(aligned_points) - 1):
+
+        index = 1
+        ref_pts = aligned_points[index]
+        other_pts = aligned_points[index - 1]
+
+        """t_opt, R_opt = self.icpContainer.full_pt2pl(ref_pts, other_pts, positions[index], 20, None)
+
+        other_pts = (R_opt @ other_pts.T).T - t_opt"""
+
+
+        """v1 = self.renderer.addPoints(ref_pts)
+        v2 = self.renderer.addPoints(other_pts)
+        time.sleep(5)
+        self.renderer.freePoints(v1)
+        self.renderer.freePoints(v2)"""
+
+
+        outlier_filter = OutlierFilter(icpContainer=self.icpContainer, dbscan_eps=0.5, dbscan_minpt=10, do_threading=True)
+
+        start = time.time()
+        outlier_mask = outlier_filter.getOutlierIndexes(ref_pts, other_pts, self.renderer, use_threads=True)
+        print("total outlier indexing time: " + str(time.time()-start))
+
+
+        self.renderer.addPoints(ref_pts[outlier_mask])
+
+
+    def test_groundVoxelize(self):
+
+
+        pts = self.getLidarPoints(0)
+        pts = Voxelizer.voxelGroundFilter(pts)
+        self.renderer.addPoints(pts)
+
+
+
+    def test_showIntensities(self):
+        pts, cls, ints = self.lidarDataReader.getPointsWithIntensities(0)
+        self.renderer.addPoints(pts, ints)
+
+    def test_canRenderVoxels(self):
+        pts, poses, rots = self.getAlignedLidarPoints(10)
+
+        v = Voxelizer(self.computeShader, voxel_size=0.2)
+
+        pc = pts[0]
+
+        st = time.time()
+        v.addPoints(pc)
+        print("expanson: " + str(time.time() - st))
+
+        voxels = v.getVoxelPositions()
+
+        self.renderer.addPoints(voxels)
+
+        lines = v.getVoxelsAsLineGrid()
+        self.renderer.setLines(lines)
+
+    def test_can_renderVoxelData(self):
+        pts, poses, rots = self.getAlignedLidarPoints(10)
+
+        v = Voxelizer(self.computeShader, voxel_size=0.4)
+
+        pc = pts[0]
+
+        st = time.time()
+        v.addPoints(pc)
+        print("expanson: " + str(time.time()-st))
+
+
+        voxels = v.getVoxelPositions()
+
+        self.renderer.addPoints(voxels)
+
+        lines = v.getVoxelsAsLineGrid()
+        self.renderer.setLines(lines)
+
+        for i in range(v.stored_voxels):
+            stored = v.voxel_data[i][0]
+            if stored > 1:
+                pt_indexes = v.voxel_data[i][1:stored]
+                pts = v.added_points[pt_indexes][:, :3]
+                self.renderer.addPoints(pts, self.green)
+
+        """st = time.time()
+        v.addPoints(pts[1])
+        print("2nd expanson: " + str(time.time()-st))"""
+
+
+
+    def test_shouldExpand(self):
+        pts, poses, rots = self.getAlignedLidarPoints(10)
+
+        v = Voxelizer(self.computeShader, voxel_size=0.4)
+
+        pc = pts[0]
+
+        st = time.time()
+        v.addPoints(pc, True)
+        print("expanson: " + str(time.time()-st))
+
+
+        voxels = v.getVoxelPositions()
+
+
+
+        st = time.time()
+        v.addPoints(pts[1], True)
+        print("2nd expanson: " + str(time.time()-st))
+
+        st = time.time()
+        v.addPoints(pts[2], True)
+        print("3rd expanson: " + str(time.time() - st))
+
+        self.renderer.addPoints(voxels)
+
+
+
+
+    def test_rendererGraphics(self):
+        self.renderer.addPoints(Renderer.unitCube())
+        self.renderer.setLines(Renderer.unitCubeEdges())
+
+
+
+    def test_gpuCanVoxelize(self):
+        pts, poses, rots = self.getAlignedLidarPoints(10)
+
+        v = Voxelizer(self.computeShader, voxel_size=0.5)
+
+        pc = pts[0]
+
+        st = time.time()
+        v.addPoints(pc)
+        print("expanson: " + str(time.time() - st))
+
+        pc = pts[1]
+
+        st = time.time()
+        v.addPoints(pc)
+        print("expanson: " + str(time.time() - st))
+
+        pc = pts[2]
+
+        st = time.time()
+        v.addPoints(pc)
+        print("expanson: " + str(time.time() - st))
+

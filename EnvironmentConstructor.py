@@ -1,5 +1,12 @@
-import numpy as np
+import math
+import threading
+import time
 
+import numpy as np
+from pygame.threads import Thread
+from scipy.spatial import KDTree
+
+from OutlierFilter import OutlierFilter
 
 
 class EnvironmentConstructor:
@@ -17,8 +24,10 @@ class EnvironmentConstructor:
         self.rotation = np.eye(3)
         self.time = 0
         self.reference_points = None
+        self.prev_added_points = None, None
         self.prev_position = None
         self.prev_velocity = None
+        self.prev_origin = None
         self.prev_rotation = None
         self.angular_velocity = None
         self.prev_time = None
@@ -29,21 +38,24 @@ class EnvironmentConstructor:
         self.white = np.array([255, 255, 255])
         self.colors = [self.red, self.green, self.blue, self.white]
 
-        self.base_horizontal_rotation = np.eye(3)
-        self.base_vertical_rotation = np.eye(3)
-
-        self.count = 0
+        self.local_frame_counter = 0
+        self.total_frame_counter = 0
         self.reset_origin_treshold = 5
 
-        self.curr_r_opt = None
-        self.curr_t_opt = None
 
 
+        self.outlier_filter = OutlierFilter(icpContainer=icpcontainer, dbscan_eps=0.5, dbscan_minpt=10, do_threading=True)
+
+
+        self.previous_aligned_data = [] # (points, colors)
+        self.prev_poses = []
+
+        self.latest_filtered_data = (None, None)
 
     def getNextFrameData(self, offset):
         key = self.framekeys[self.frameindex + offset]
 
-        lidar_points = self.lidar.getPoints(key)
+        lidar_points = self.lidar.getPointsWithIntensities(key)
         oxts = self.oxts.getOx(key)
 
         self.frameindex += 1
@@ -52,74 +64,17 @@ class EnvironmentConstructor:
 
         return lidar_points, oxts
 
-    def calculateTransition_icp(self, current_lidar, oxts=None, point_to_plane=True, debug=True, iterations=20):
 
-        points, colors = current_lidar
-        if self.reference_points is None:
-
-            self.prev_position = np.array([0, 0, 0])
-            self.prev_velocity = np.array([0, 0, 0])
-            self.angular_velocity = np.eye(3)
-            self.prev_rotation = np.eye(3)
-
-            self.reference_points = points
-            self.renderer.addPoints(points, colors)
-            self.renderer.addPoints([self.prev_position], self.red)
-
-
-        else:
-
-            self.count+=1
-            # estimated_rotation = self.angular_velocity @ self.prev_rotation
-            estimated_rotation = self.angular_velocity @ self.prev_rotation
-            translated_points = (estimated_rotation @ points.T).T + self.prev_position + self.prev_velocity
-
-
-            if debug:
-                if point_to_plane:
-                    t_opt, R_opt = self.icp.full_pt2pl(self.reference_points, translated_points, self.prev_position, iterations=iterations, renderer=self.renderer)
-                else:
-                    t_opt, R_opt = self.icp.full_pt2pt(self.reference_points, translated_points, self.prev_position, iterations=iterations, renderer=self.renderer)
-            else:
-                if point_to_plane:
-                    t_opt, R_opt = self.icp.full_pt2pl(self.reference_points, translated_points, self.prev_position,
-                                                       iterations=iterations)
-                else:
-                    t_opt, R_opt = self.icp.full_pt2pt(self.reference_points, translated_points, self.prev_position,
-                                                       iterations=iterations)
-
-            corrected_lidar_points = (R_opt @ translated_points.T).T - t_opt
-
-            if self.count > self.reset_origin_treshold:
-                print("reference update")
-                self.reference_points = corrected_lidar_points
-                self.count = 0
-
-            translation_delta = ((R_opt @ np.array([0, 0, 0]).T).T - t_opt) - np.array([0, 0, 0])
-
-
-            curr_pos = self.prev_position
-            self.prev_position = self.prev_position + self.prev_velocity + translation_delta
-            self.prev_velocity = self.prev_position - curr_pos
-
-            curr_rot = self.prev_rotation
-            self.prev_rotation = R_opt @ self.angular_velocity @ self.prev_rotation
-            self.angular_velocity = self.prev_rotation @ np.transpose(curr_rot)
-
-            self.renderer.addPoints([self.prev_position], self.red)
-            self.renderer.addPoints(corrected_lidar_points, colors)
-            # time.sleep(1)
-
-    def getDeltaVelocity(self, current_velocity, current_rotation, current_time):
-        delta_time = (current_time - self.prev_time).total_seconds()
+    def getDeltaVelocity(self, current_velocity, current_rotation, current_time, prev_time):
+        delta_time = (current_time - prev_time).total_seconds()
         current_velocity *= delta_time
         delta_current_velocity = (current_rotation @ current_velocity.T).T
 
         return delta_current_velocity
 
-    def getTranslationDelta(self, r_opt, t_opt):
-        translated_to = (r_opt @ np.array([0,0,0]).T).T - t_opt
-        return translated_to - np.array([0, 0, 0])
+    def getRefinedPosition(self, r_opt, t_opt, estimated_position):
+        refined_position = (r_opt @ estimated_position.T).T - t_opt
+        return refined_position
 
     def applyOptimalTranslation(self, r_opt, t_opt, points):
         return (r_opt @ points.T).T - t_opt
@@ -127,13 +82,17 @@ class EnvironmentConstructor:
     def getCurrentOxtsData(self, current_oxts):
         return -current_oxts.getVelocity(), current_oxts.getTrueRotation(np.eye(3)), current_oxts.getYawRotation(np.eye(3)), current_oxts.getTime()
 
-    def cullColorPoints(self, points, colors):
+    def cullColorPoints(self, points, colors, cullColors = False):
+        if not cullColors:
+            return points, colors
+
         defaultColor = self.lidar.DEFAULT_COLOR
         mask = np.all(colors != defaultColor, axis=1)
         return points[mask], colors[mask]
 
     def setupTransitions(self, current_oxts):
         self.prev_position = np.array([0, 0, 0])
+        self.prev_origin = np.array([0, 0, 0])
         self.prev_velocity = np.array([0, 0, 0])
         self.angular_velocity = np.eye(3)
         self.prev_rotation = np.eye(3)
@@ -141,73 +100,160 @@ class EnvironmentConstructor:
         self.prev_time = current_oxts.getTime()
 
 
-        self.curr_r_opt = np.array([0, 0, 0])
-        self.curr_r_opt = np.eye(3)
 
-    def calculateTransition_imu(self, current_lidar, current_oxts, point_to_plane=True, debug=False, iterations=20, cullColors=False):
+    def getRefinedTransition(self, reference_points, reference_origin, points_to_refine, iterations, point_to_plane, renderer=None, debug=False, full_iter=False):
+        if debug:
+            if point_to_plane:
+                t_opt, R_opt = self.icp.full_pt2pl(reference_points, points_to_refine, reference_origin,
+                                                   iterations=iterations, renderer=renderer, full_iter=full_iter)
+            else:
+                t_opt, R_opt = self.icp.full_pt2pt(reference_points, points_to_refine, reference_origin,
+                                                   iterations=iterations, renderer=renderer)
+        else:
+            if point_to_plane:
+                t_opt, R_opt = self.icp.full_pt2pl(reference_points, points_to_refine, reference_origin,
+                                                   iterations=iterations, full_iter=full_iter)
+            else:
+                t_opt, R_opt = self.icp.full_pt2pt(reference_points, points_to_refine, reference_origin,
+                                                   iterations=iterations)
 
-        points, colors = current_lidar
+        return t_opt, R_opt
+
+
+
+
+    def calculateTransition_imu(self, current_lidar, current_oxts, point_to_plane=True, debug=False, iterations=20, cullColors=False, removeOutliers=False, pure_imu=False):
+
+        points, colors, intensities = current_lidar
+
+        if not cullColors:
+            colors = intensities
+
         current_velocity, current_horz_rot, current_vert_rot, current_time = self.getCurrentOxtsData(current_oxts=current_oxts)
         current_horz_rot = np.linalg.inv(current_horz_rot)
 
         current_rotation = current_vert_rot @ current_horz_rot
 
-        if self.reference_points is None:
 
+
+        if self.total_frame_counter == 0:
             self.setupTransitions(current_oxts=current_oxts)
             self.reference_points = (current_rotation @ points.T).T
 
             self.renderer.addPoints([self.prev_position], self.red)
 
-            if cullColors:
-                culled_points, culled_colors = self.cullColorPoints(self.reference_points, colors)
-                self.renderer.addPoints(culled_points, culled_colors)
-            else:
-                self.renderer.addPoints(self.reference_points, colors)
+
+            self.previous_aligned_data.append((self.reference_points, colors))
+
+            imu_position = np.array([0.0, 0.0, 0.0])
+            refined_position = np.array([0.0, 0.0, 0.0])
+            imu_rotation = current_rotation
+            refined_rotation = current_rotation
+            c_time = current_time
+            self.prev_poses.append((imu_position, refined_position, imu_rotation, refined_rotation, c_time))
+
+            # self.renderer.addPoints(self.reference_points, colors)
+
+            self.total_frame_counter += 1
+
+
 
         else:
-            self.count += 1
+            total_frame_time = time.time()
 
-            delta_velocity = self.getDeltaVelocity(current_velocity=current_velocity,
-                                                      current_time=current_time,
-                                                      current_rotation=current_rotation)
-            estimated_position = self.prev_position + delta_velocity
+
+            p_imu_pos, p_refined_pos, p_imu_rotation, p_refined_rotation, p_time = self.prev_poses[self.total_frame_counter - 1]
+
+            delta_velocity = self.getDeltaVelocity( current_velocity=current_velocity,
+                                                    current_time=current_time,
+                                                    current_rotation=current_rotation,
+                                                    prev_time=p_time )
+
+            estimated_position = p_refined_pos + delta_velocity
+            next_pure_imu_position = p_imu_pos + delta_velocity
+
 
             aligned_points = (current_rotation @ points.T).T + estimated_position
 
+            prev_aligned_points, prev_colors = self.previous_aligned_data[self.total_frame_counter - 1]
+            if removeOutliers:
+                prev_filter_thread = threading.Thread(target=self.filterPoints, args=(aligned_points, prev_aligned_points, prev_colors))
+                prev_filter_thread.start()
 
-            if debug:
-                if point_to_plane:
-                    t_opt, R_opt = self.icp.full_pt2pl(self.reference_points, aligned_points, self.prev_position, iterations=iterations, renderer=self.renderer)
-                else:
-                    t_opt, R_opt = self.icp.full_pt2pt(self.reference_points, aligned_points, self.prev_position, iterations=iterations, renderer=self.renderer)
+            if not pure_imu:
+
+                full_iteration = False
+                iterations_to_do = iterations
+                if self.local_frame_counter + 1 >= self.reset_origin_treshold:
+                    full_iteration = True
+                    iterations_to_do = 40
+
+
+                t_opt, R_opt = self.getRefinedTransition(reference_points=self.reference_points,
+                                                         reference_origin=self.prev_origin,
+                                                         points_to_refine=aligned_points,
+                                                         iterations=iterations_to_do,
+                                                         point_to_plane=point_to_plane,
+                                                         renderer=self.renderer,
+                                                         debug=debug,
+                                                         full_iter=full_iteration)
+
+
+                refined_points = self.applyOptimalTranslation(r_opt=R_opt, t_opt=t_opt, points=aligned_points)
+                refined_position = self.getRefinedPosition(r_opt=R_opt, t_opt=t_opt, estimated_position=estimated_position)
+                refined_rotation = R_opt @ current_rotation
             else:
-                if point_to_plane:
-                    t_opt, R_opt = self.icp.full_pt2pl(self.reference_points, aligned_points, self.prev_position,
-                                                       iterations=iterations)
-                else:
-                    t_opt, R_opt = self.icp.full_pt2pt(self.reference_points, aligned_points, self.prev_position,
-                                                       iterations=iterations)
+                refined_points = aligned_points
+                refined_position = estimated_position
+                refined_rotation = current_rotation
+                if debug:
+                    time.sleep(1)
 
-            self.curr_r_opt, self.curr_t_opt = R_opt, t_opt
+            if removeOutliers:
+                prev_filter_thread.join()
+                filtered_points, filtered_colors = self.latest_filtered_data
+                culled_refined_points, culled_refined_colors = self.cullColorPoints(filtered_points, filtered_colors, cullColors)
+                self.renderer.addPoints(culled_refined_points, culled_refined_colors)
+            else:
+                culled_refined_points, culled_refined_colors = self.cullColorPoints(prev_aligned_points, prev_colors, cullColors)
+                self.renderer.addPoints(culled_refined_points, culled_refined_colors)
 
-            refined_points = self.applyOptimalTranslation(r_opt=R_opt, t_opt=t_opt, points=aligned_points)
-            translation_delta = self.getTranslationDelta(r_opt=R_opt, t_opt=t_opt)
+            self.local_frame_counter += 1
 
-            self.renderer.addPoints([estimated_position], self.red)
-            self.renderer.addPoints([estimated_position + translation_delta], self.green)
-
-
-            if self.count > self.reset_origin_treshold:
+            if self.local_frame_counter >= self.reset_origin_treshold:
                 print("reference update")
                 self.reference_points = refined_points
-                self.count = 0
-
-            self.prev_position = estimated_position + translation_delta
-            self.prev_time = current_time
-
-            if cullColors:
-                refined_points, colors = self.cullColorPoints(refined_points, colors)
+                self.prev_origin = refined_position
+                self.local_frame_counter = 0
 
 
-            self.renderer.addPoints(refined_points, colors)
+            self.prev_poses.append((next_pure_imu_position, refined_position, current_rotation, refined_rotation, current_time))
+            self.previous_aligned_data.append((refined_points, colors))
+
+
+            self.renderer.addPoints([next_pure_imu_position], self.red)
+            self.renderer.addPoints([refined_position], self.green)
+
+
+
+
+            self.total_frame_counter += 1
+
+
+            print("frame " + str(self.total_frame_counter) + " time: " + str(time.time() - total_frame_time))
+            print("---\n")
+
+
+    def filterPoints(self, ref_points, points_to_filter, colors_to_filter=None):
+
+        outlier_mask = self.outlier_filter.getOutlierIndexes(points_to_filter, ref_points, renderer=None, use_threads=True)
+
+        if colors_to_filter is not None:
+            self.latest_filtered_data = (points_to_filter[~outlier_mask], colors_to_filter[~outlier_mask])
+        else:
+            self.latest_filtered_data = (points_to_filter[~outlier_mask], None)
+
+
+
+    def coloreq(self, color1, color2):
+        return np.array_equal(color1, color2)

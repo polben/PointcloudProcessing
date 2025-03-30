@@ -461,3 +461,4 @@ class GpuTest(unittest.TestCase):
         self.assertTrue(np.allclose(H_cuda, H_numpy, atol=self.tolerance))
         self.assertTrue(np.allclose(B_cuda, B_numpy, atol=self.tolerance))
 
+

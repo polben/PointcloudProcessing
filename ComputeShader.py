@@ -10,7 +10,7 @@ import numpy as np
 
 class ComputeShader:
 
-    def __init__(self, maxPointsPerCloud=200000, maxScans=500):
+    def __init__(self, maxPointsPerCloud=200000, maxScans=100):
 
 
 
@@ -33,7 +33,9 @@ class ComputeShader:
         #print(glGetString(GL_VENDOR))  # Vendor info
         #print(glGetString(GL_VERSION))  # OpenGL version
 
+        self.bigint = 9999999
         self.float_size = 4
+        self.max_points_per_voxel = 4096
 
         self.maxPointsPerCloud = maxPointsPerCloud
         self.maxScans = maxScans
@@ -47,6 +49,11 @@ class ComputeShader:
         self.ssbo_normals_a = None
         self.ssbo_normals_b = None
 
+        self.ssbo_voxel_index = None
+        self.ssbo_voxel_data = None
+        self.ssbo_unknown_points = None
+
+        self.ssbo_debug_buffer = None
 
         self.origin = None
         self.origin_location = None
@@ -77,6 +84,7 @@ class ComputeShader:
         self.nearest_neighbour = None
         self.normal_shader = None
         self.point_plane_shader = None
+        self.voxel_shader = None
 
         self.main_shadercode_regex = "void main(){}"
 
@@ -103,7 +111,7 @@ class ComputeShader:
         self.nearest_neighbour = self.create_shader_program(self.glslFile("NearestNeighbourScan.glsl"))
         self.normal_shader = self.create_shader_program(self.glslFile("NormalShader.glsl"))
         self.point_plane_shader = self.create_shader_program(self.glslFile("LeastSquaresPlane.glsl"))
-
+        self.voxel_shader = self.create_shader_program(self.glslFile("VoxelShader.glsl"), extend=False)
 
     def prepareBuffers(self):
         self.ssbo_points_a = glGenBuffers(1)
@@ -114,6 +122,12 @@ class ComputeShader:
         self.ssbo_Bs = glGenBuffers(1)
         self.ssbo_normals_a = glGenBuffers(1)
         self.ssbo_normals_b = glGenBuffers(1)
+
+        self.ssbo_voxel_data = glGenBuffers(1)
+        self.ssbo_voxel_index = glGenBuffers(1)
+        self.ssbo_unknown_points = glGenBuffers(1)
+
+        self.ssbo_debug_buffer = glGenBuffers(1)
 
         self.points_a = np.zeros((self.maxPointsPerCloud, 4)).astype(np.float32)
         self.points_b = np.zeros((self.maxPointsPerCloud, 4)).astype(np.float32)
@@ -159,6 +173,8 @@ class ComputeShader:
         glBufferData(GL_SHADER_STORAGE_BUFFER, self.normals_b.nbytes, None, GL_DYNAMIC_DRAW)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
+        # voxel buffers are more dynamic, have to allocate on the spot
+
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, self.ssbo_points_a)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, self.ssbo_points_b)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, self.ssbo_scan_lines)
@@ -167,6 +183,11 @@ class ComputeShader:
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, self.ssbo_Bs)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, self.ssbo_normals_a)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, self.ssbo_normals_b)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, self.ssbo_voxel_index)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, self.ssbo_voxel_data)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, self.ssbo_unknown_points)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, self.ssbo_debug_buffer)
+
 
     def reallocate_out(self, lens_data):
         len_a = lens_data[0]
@@ -216,6 +237,22 @@ class ComputeShader:
             glDeleteBuffers(1, [self.ssbo_normals_b])
             self.ssbo_normals_b = None
 
+        if self.ssbo_voxel_index is not None:
+            glDeleteBuffers(1, [self.ssbo_voxel_index])
+            self.ssbo_voxel_index = None
+
+        if self.ssbo_voxel_data is not None:
+            glDeleteBuffers(1, [self.ssbo_voxel_data])
+            self.ssbo_voxel_data = None
+
+        if self.ssbo_unknown_points is not None:
+            glDeleteBuffers(1, [self.ssbo_unknown_points])
+            self.ssbo_unknown_points = None
+
+        if self.ssbo_debug_buffer is not None:
+            glDeleteBuffers(1, [self.ssbo_debug_buffer])
+            self.ssbo_debug_buffer = None
+
     def bufferSubdata(self, np_array, ssbo):
         if np_array.shape[1] == 3:
             np_array = self.pad_points(np_array)
@@ -237,6 +274,7 @@ class ComputeShader:
             target_ssbo = self.ssbo_scan_lines
             if np_array.dtype != np.uint32:
                 np_array = np_array.astype(np.uint32)
+            # print(len(np_array))
 
         if ssbo == self.ssbo_correspondence:
             target_ssbo = self.ssbo_correspondence
@@ -439,6 +477,9 @@ class ComputeShader:
 
         glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT)
 
+    def setInitialScanGuess(self):
+        self.correspondences[:, 3] = -1.0
+
     def prepareLS(self, points_a, scan_lines, points_b, origin, debug_mode = False):
         self.setActiveProgram(self.least_squares_point)
 
@@ -450,7 +491,11 @@ class ComputeShader:
 
         self.bufferSubdata(points_a, self.ssbo_points_a)
 
-        try:
+        self.setInitialScanGuess()
+        self.bufferSubdata(self.correspondences, self.ssbo_correspondence)
+
+
+        try: # this is a bug, scan for kitti, no more than 64 scan lines
             self.bufferSubdata(scan_lines, self.ssbo_scan_lines)
         except OpenGL.error.GLError as e:
             a = scan_lines
@@ -477,12 +522,12 @@ class ComputeShader:
 
         return self.hs_out, self.bs_out
 
-    def padScanlines(self, scan_lines, points_a):
+    def padScanlines(self, scan_lines):
         scan_lines = np.array(scan_lines).astype(np.uint32)
 
-        if scan_lines.shape != (len(points_a), 4):
-            padded = np.ones((scan_lines.shape[0], 4), dtype=np.uint32)
-            padded[:, :2] = scan_lines.astype(np.uint32)
+        if scan_lines.shape != (self.maxScans, 4):
+            padded = np.ones((self.maxScans, 4), dtype=np.uint32)
+            padded[:scan_lines.shape[0], :scan_lines.shape[1]] = scan_lines.astype(np.uint32)
             return padded
 
         return scan_lines
@@ -490,7 +535,7 @@ class ComputeShader:
     def prepareDispatchNormals(self, points_a, scan_lines, origin):
         self.setActiveProgram(self.normal_shader)
 
-        scan_lines = self.padScanlines(scan_lines, points_a)
+        scan_lines = self.padScanlines(scan_lines)
 
 
         self.bufferSubdata(points_a, self.ssbo_points_a)
@@ -520,14 +565,15 @@ class ComputeShader:
         self.prepareDispatchNormals(points_a, scan_lines, origin)
 
         self.setActiveProgram(self.point_plane_shader)
-        scan_lines = np.array(scan_lines).astype(np.uint32)
-        padded = np.ones((scan_lines.shape[0], 4), dtype=np.uint32)
-        padded[:, :2] = scan_lines.astype(np.uint32)
-        scan_lines = padded
+
+        scan_lines = self.padScanlines(scan_lines)
 
         self.bufferSubdata(points_a, self.ssbo_points_a)
 
         self.bufferSubdata(scan_lines, self.ssbo_scan_lines)
+
+        self.setInitialScanGuess()
+        self.bufferSubdata(self.correspondences, self.ssbo_correspondence)
 
         self.saveUniformInfo(points_a, points_b, origin, scan_lines, debug_mode)
 
@@ -546,11 +592,14 @@ class ComputeShader:
     def prepareNNS(self, points_a, scan_lines, points_b, origin):
         self.setActiveProgram(self.nearest_neighbour)
 
-        scan_lines = self.padScanlines(scan_lines, points_a)
+        scan_lines = self.padScanlines(scan_lines)
 
         self.bufferSubdata(points_a, self.ssbo_points_a)
 
         self.bufferSubdata(scan_lines, self.ssbo_scan_lines)
+
+        self.setInitialScanGuess()
+        self.bufferSubdata(self.correspondences, self.ssbo_correspondence)
 
         self.saveUniformInfo(points_a, points_b, origin, scan_lines, False)
 
@@ -568,6 +617,84 @@ class ComputeShader:
         dists = self.corr_out[:, 1].astype(np.float32)
 
         return corr_indexes, dists
+
+    def prepareDispatchVoxelizer(self, np_points, voxel_index, voxel_data, voxel_size, stored_voxel_num, begin_index, debug=False):
+        self.setActiveProgram(self.voxel_shader)
+
+        st = time.time()
+        unknown_len = 1 + len(np_points)
+        modd = 16 - unknown_len % 16
+        unknown_len = unknown_len + modd
+
+        unknown_points = np.zeros(unknown_len).astype(np.int32)
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_index)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, voxel_index.nbytes, voxel_index, GL_DYNAMIC_DRAW)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_data)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, voxel_data.nbytes, voxel_data, GL_DYNAMIC_DRAW)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_unknown_points)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, unknown_points.nbytes, unknown_points, GL_DYNAMIC_DRAW)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        if debug:
+            debug_data = np.zeros_like(np_points)
+            debug_data = self.pad_points(debug_data)
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_debug_buffer)
+            glBufferData(GL_SHADER_STORAGE_BUFFER, debug_data.nbytes, debug_data, GL_DYNAMIC_DRAW)
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+
+        self.bufferSubdata(np_points, self.ssbo_points_a)
+
+        location = glGetUniformLocation(self.voxel_shader, "voxel_lens_data")
+        lens_data = np.array([len(np_points), stored_voxel_num, begin_index, 0]).astype(np.uint32)
+        glUniform4ui(location, lens_data[0], lens_data[1], lens_data[2], lens_data[3])
+
+        location = glGetUniformLocation(self.voxel_shader, "voxel_size")
+        glUniform1f(location, voxel_size)
+        # print("prep time: " + str(time.time()-st))
+
+
+        st = time.time()
+        self.dispatchCurrentProgramWait(len(np_points))
+        # print(str(time.time()-st))
+
+
+        st = time.time()
+        out_vind = np.zeros_like(voxel_index).astype(np.int32)
+        out_vdat = np.zeros_like(voxel_data).astype(np.int32)
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_index)
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, out_vind.nbytes,
+                           out_vind.ctypes.data_as(c_void_p))
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_data)
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, out_vdat.nbytes,
+                           out_vdat.ctypes.data_as(c_void_p))
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_unknown_points)
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, unknown_points.nbytes,
+                           unknown_points.ctypes.data_as(c_void_p))
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        if debug:
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_debug_buffer)
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, debug_data.nbytes,
+                               debug_data.ctypes.data_as(c_void_p))
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        # print("read time: " + str(time.time()-st))
+        if debug:
+            return unknown_points, out_vind, out_vdat, debug_data
+        else:
+            return unknown_points, out_vind, out_vdat, None
 
 
 
@@ -601,6 +728,10 @@ class ComputeShader:
             self.deleteProgram(self.point_plane_shader)
             self.point_plane_shader = None
 
+        if self.voxel_shader is not None:
+            self.deleteProgram(self.voxel_shader)
+            self.voxel_shader = None
+
         if self.window is not None:
             glfw.destroy_window(self.window)
             self.window = None
@@ -612,20 +743,23 @@ class ComputeShader:
 
         return base_code.replace(self.main_shadercode_regex, shader_code)
 
-    def create_shader_program(self, shader_code):
+    def create_shader_program(self, shader_code, extend=True):
         # test if base compiles
         shader = glCreateShader(GL_COMPUTE_SHADER)
-        base_code = self.glslFile("FunctionalBase.glsl")
-        glShaderSource(shader, base_code)
-        glCompileShader(shader)
-        if not glGetShaderiv(shader, GL_COMPILE_STATUS):
-            print("Unable to compile base shader")
-            raise RuntimeError(glGetShaderInfoLog(shader).decode())
+
+        if extend:
+            base_code = self.glslFile("FunctionalBase.glsl")
+            glShaderSource(shader, base_code)
+            glCompileShader(shader)
+            if not glGetShaderiv(shader, GL_COMPILE_STATUS):
+                print("Unable to compile base shader")
+                raise RuntimeError(glGetShaderInfoLog(shader).decode())
 
 
 
 
-        shader_code = self.extend_functional_code(shader_code=shader_code)
+            shader_code = self.extend_functional_code(shader_code=shader_code)
+
 
         program = glCreateProgram()
 

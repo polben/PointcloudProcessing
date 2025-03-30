@@ -24,7 +24,7 @@ void main() {
         }
     }*/
 
-    int minind = findClosestPoint(refPoint);
+    int minind = findClosestPoint(refPoint, idx);
     float minDist = distsq(refPoint, points_a[minind]);
 
 

@@ -46,7 +46,7 @@ void main() {
     vec4 refPoint = points_b[idx];
     float minDist = 1.23e20;
 
-    int minind = findClosestPoint(refPoint);
+    int minind = findClosestPoint(refPoint, idx);
     minDist = distsq(refPoint, points_a[minind]);
 
 
