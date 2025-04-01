@@ -1,9 +1,9 @@
 import time
 
 import numpy as np
-from open3d.examples.geometry.voxel_grid_carving import voxel_carving
 
 from Renderer import Renderer
+from VoxelManager import VoxelManager
 
 
 class Voxelizer:
@@ -13,12 +13,14 @@ class Voxelizer:
 
     # voxel data will be a 2d array: row: pointed to by chunk, each row contains an array of indicies of contained points
 
-    def __init__(self, compute_shader, voxel_size = 1):
+    def __init__(self, compute_shader, renderer, voxel_size = 1):
 
         self.voxel_size = voxel_size
-        self.max_points = 4096
-        self.compute = compute_shader
 
+
+        self.max_points = 1024 # has to be fixed, same as shader
+        self.compute = compute_shader
+        self.renderer = renderer
 
         self.voxel_index = None # (M, 4) growing * 2, [x, y, z voxel coord, pointer to voxel data]
         self.voxel_data = None # (M, 1 + max_points), growing * 2, [0]: number of points sored [1:] indexes of stored points
@@ -28,7 +30,153 @@ class Voxelizer:
         self.last_added_point = 0
         self.bigint = 9999999
 
+        self.realloc_needed = True
+        self.prev_stored_voxels = -1
+
         self.initVoxels()
+
+        self.voxman = VoxelManager(self, renderer)
+
+
+
+
+
+
+    def addPoints(self, np_points, printt=False):
+        self.handleAddingPoints(np_points)
+
+        current_stored_begin_index = self.last_added_point - len(np_points) # points exactly to the first point in the current cloud
+
+        start = time.time()
+        gpu = True
+        if gpu:
+            unknown_points, self.voxel_data, _ = self.compute.prepareDispatchVoxelizer(
+                np_points=np_points,
+                voxel_index=self.voxel_index,
+                voxel_data=self.voxel_data,
+                voxel_size=self.voxel_size,
+                stored_voxel_num=self.stored_voxels,
+                begin_index=current_stored_begin_index,
+                max_points_to_store=self.max_points,
+                realloc_needed=self.realloc_needed,
+                prev_stored_voxels=self.prev_stored_voxels,
+                debug=False)
+        else:
+            unknown_points, self.voxel_index, self.voxel_data, v_ids, v_entries = self.cpuGpuDebug_dispatchVoxels(
+                np_points=np_points,
+                voxel_index=self.voxel_index,
+                voxel_data=self.voxel_data,
+                voxel_size=self.voxel_size,
+                stored_voxel_num=self.stored_voxels,
+                begin_index=current_stored_begin_index,
+            )
+        if printt:
+            print("gpu > unknown points: " + str(unknown_points[0]) + " " + str(time.time()-start))
+
+        start = time.time()
+
+        self.realloc_needed, self.prev_stored_voxels = self.storeUnknownPoints(unknown_points, printt)
+        if printt:
+            print("stored unknown: " + str(time.time()-start))
+
+        if self.renderer is not None:
+            self.voxman.frameVoxelized(np_points)
+
+    def vectorizedGetVoxelCoord(self, np_points):
+        return np.ceil(np_points / self.voxel_size).astype(np.int32)
+
+    def storeUnknownPoints(self, unknown_points, printt=False):
+        st = time.time()
+
+        unknown_length = unknown_points[0]
+
+
+        vectorized = True
+        print_time = printt
+
+
+        was_realloc = False
+        prev_stored_voxels = self.stored_voxels
+
+        if vectorized:
+            points_to_insert = self.added_points[unknown_points[1:unknown_length]][:, :3]
+            point_voxel_ids = self.vectorizedGetVoxelCoord(points_to_insert)
+            unique_ids, index, inverse, counts = np.unique(point_voxel_ids, return_inverse=True, return_counts=True, return_index=True, axis=0)
+
+            sort_order = np.argsort(inverse)
+
+            sorted_point_ids = unknown_points[1:unknown_length][sort_order]
+
+            last = 0
+            voxel_id_index = 0
+            for c in counts:
+                unique_voxel_id = unique_ids[voxel_id_index]
+                voxel_point_ids = sorted_point_ids[last:last + c]
+
+                voxel_index_entry, ins = self.findVoxelId(self.voxel_index, unique_voxel_id)
+                if voxel_index_entry != -1:
+                    raise RuntimeError("Here all unkown points should have a new voxel created")
+
+                values_to_move = self.voxel_index[ins:self.stored_voxels]
+                if len(values_to_move) > 0:
+                    self.voxel_index[ins + 1:self.stored_voxels + 1] = self.voxel_index[ins:self.stored_voxels]
+
+                self.voxel_index[ins][:3] = unique_voxel_id[:3]
+                self.voxel_index[ins][3] = self.stored_voxels
+
+                self.voxel_data[self.stored_voxels][0] = len(voxel_point_ids)
+                self.voxel_data[self.stored_voxels][1:len(voxel_point_ids)+1] = voxel_point_ids
+
+                self.stored_voxels += 1
+
+                if self.stored_voxels == len(self.voxel_index):
+                    self.voxel_index = np.vstack([self.voxel_index, np.full_like(self.voxel_index, self.bigint)])
+                    self.voxel_data = np.vstack([self.voxel_data, np.zeros_like(self.voxel_data)])
+                    was_realloc = True
+
+                voxel_id_index += 1
+                last += c
+        else:
+            for i in range(unknown_length):
+
+                point = self.added_points[unknown_points[1 + i]][:3]
+                voxel = self.getVoxelCoord(point)
+
+                voxel_index_entry, ins = self.findVoxelId(self.voxel_index, voxel)
+
+                voxel_data_index = self.voxel_index[voxel_index_entry][3]
+                if voxel_index_entry == -1:
+                    values_to_move = self.voxel_index[ins:self.stored_voxels]
+                    if len(values_to_move) > 0:
+                        self.voxel_index[ins + 1:self.stored_voxels + 1] = self.voxel_index[ins:self.stored_voxels]
+
+                    self.voxel_index[ins][:3] = voxel
+                    self.voxel_index[ins][3] = self.stored_voxels
+
+                    self.voxel_data[self.stored_voxels][0] = 1
+                    self.voxel_data[self.stored_voxels][1] = unknown_points[1 + i]
+
+                    self.stored_voxels += 1
+
+                    # realloc
+
+                    if self.stored_voxels == len(self.voxel_index):
+                        self.voxel_index = np.vstack([self.voxel_index, np.full_like(self.voxel_index, self.bigint)])
+                        self.voxel_data = np.vstack([self.voxel_data, np.zeros_like(self.voxel_data)])
+                        was_realloc = True
+
+                else:
+                    stored_points = self.voxel_data[voxel_data_index][0]
+
+                    if stored_points < self.max_points - 1:
+                        self.voxel_data[voxel_data_index][1 + stored_points] = unknown_points[1 + i]
+                    self.voxel_data[voxel_data_index][0] += 1
+
+
+        if print_time:
+            print("unknown time: " + str(time.time() - st))
+
+        return was_realloc, prev_stored_voxels
 
     def cpuGpuDebug_dispatchVoxels(self, np_points, voxel_index, voxel_data, voxel_size, stored_voxel_num, begin_index):
         unknown_len = 1 + len(np_points)
@@ -61,7 +209,9 @@ class Voxelizer:
             else:
                 voxel_data_index = t_voxel_index[voxel_index_entry][3]
                 stored_points = t_voxel_data[voxel_data_index][0]
-                t_voxel_data[voxel_data_index][1 + stored_points] = begin_index + i
+
+                if stored_points < self.max_points - 1:
+                    t_voxel_data[voxel_data_index][1 + stored_points] = begin_index + i
                 t_voxel_data[voxel_data_index][0] += 1
 
         return unknown_points, t_voxel_index, t_voxel_data, np.array(calculated_voxel_ids), np.array(voxel_index_entries)
@@ -93,7 +243,8 @@ class Voxelizer:
             else:
                 voxel_data_index = t_voxel_index[voxel_index_entry][3]
                 stored_points = t_voxel_data[voxel_data_index][0]
-                t_voxel_data[voxel_data_index][1 + stored_points] = begin_index + i
+                if stored_points < self.max_points - 1:
+                    t_voxel_data[voxel_data_index][1 + stored_points] = begin_index + i
                 t_voxel_data[voxel_data_index][0] += 1
 
         return unknown_points, t_voxel_index, t_voxel_data
@@ -101,65 +252,9 @@ class Voxelizer:
     def getVoxelDensities(self):
         return self.voxel_data[:, 0]
 
-    def addPoints(self, np_points, printt=False):
-        self.handleAddingPoints(np_points)
-
-        current_stored_begin_index = self.last_added_point - len(np_points) # points exactly to the first point in the current cloud
-
-        start = time.time()
-        unknown_points, self.voxel_index, self.voxel_data, _ = self.compute.prepareDispatchVoxelizer(np_points, self.voxel_index, self.voxel_data, self.voxel_size, self.stored_voxels, current_stored_begin_index, debug=False)
-        if printt:
-            print("gpu> unknown points: " + str(unknown_points[0]) + " " + str(time.time()-start))
-
-        start = time.time()
-        self.storeUnknownPoints(unknown_points, current_stored_begin_index)
-        if printt:
-            print("stored unknown: " + str(time.time()-start))
-
-
-    def storeUnknownPoints(self, unknown_points, current_stored_begin_index):
-        unknown_length = unknown_points[0]
-
-        for i in range(unknown_length):
-
-            point = self.added_points[unknown_points[1 + i]][:3]
-            voxel = self.getVoxelCoord(point)
-
-            voxel_index_entry, ins = self.findVoxelId(self.voxel_index, voxel)
-
-            voxel_data_index = self.voxel_index[voxel_index_entry][3]
-            if voxel_index_entry == -1:
-                values_to_move = self.voxel_index[ins:self.stored_voxels]
-                if len(values_to_move) > 0:
-                    self.voxel_index[ins + 1:self.stored_voxels + 1] = self.voxel_index[ins:self.stored_voxels]
-
-                self.voxel_index[ins][:3] = voxel
-                self.voxel_index[ins][3] = self.stored_voxels
-
-                self.voxel_data[self.stored_voxels][0] = 1
-                self.voxel_data[self.stored_voxels][1] = current_stored_begin_index + i
-
-                self.stored_voxels += 1
-
-                # realloc
-
-                if self.stored_voxels == len(self.voxel_index):
-                    self.voxel_index = np.vstack([self.voxel_index, np.full_like(self.voxel_index, self.bigint)])
-                    self.voxel_data = np.vstack([self.voxel_data, np.zeros_like(self.voxel_data)])
-
-            else:
-                stored_points = self.voxel_data[voxel_data_index][0]
-                self.voxel_data[voxel_data_index][1 + stored_points] = current_stored_begin_index + i
-                self.voxel_data[voxel_data_index][0] += 1
-
-            """print(np.array_equal(self.voxel_index, self.xyzSortedArray(self.voxel_index)))
-            print(i)"""
-
-
-
     def initVoxels(self, init_size=100):
-        self.voxel_index = np.full((100, 4), self.bigint).astype(np.int32)
-        self.voxel_data = np.zeros((100, self.max_points)).astype(np.int32)
+        self.voxel_index = np.full((4096, 4), self.bigint).astype(np.int32)
+        self.voxel_data = np.zeros((4096, self.max_points)).astype(np.int32)
 
     def getVoxelCoord(self, point):
         # this is a grid of voxels of sidelength self.voxel_size
@@ -329,7 +424,45 @@ class Voxelizer:
         return first_occ, l
 
 
+    def getStoredCount(self, voxel_data_index):
+        if voxel_data_index >= self.stored_voxels:
+            return None
 
+        return self.voxel_data[voxel_data_index][0]
+
+    def getStoredPointIndicies(self, voxel_data_index):
+        if voxel_data_index >= self.stored_voxels:
+            return None
+
+        stored = self.voxel_data[voxel_data_index][0]
+        max_stored = min(stored, self.max_points)
+        return self.voxel_data[voxel_data_index][1:max_stored]
+
+    def getStoredPoints(self, voxel_data_index):
+        if voxel_data_index >= self.stored_voxels:
+            return None
+
+        stored = self.voxel_data[voxel_data_index][0]
+        max_stored = min(stored + 1, self.max_points)
+        pt_indexes = self.voxel_data[voxel_data_index][1:max_stored]
+        return self.added_points[pt_indexes][:, :3]
+
+    def getStoredVoxelCount(self):
+        return self.stored_voxels
+
+    def getVoxelDataIndexPoint(self, np_point):
+        coord = self.getVoxelCoord(np_point)
+        voxel_index_index = self.findVoxelId_gpu(self.voxel_index, coord)
+        if voxel_index_index == -1:
+            return None
+        else:
+            return self.voxel_index[voxel_index_index][3]
+
+    def getVoxelDataIndexAt(self, index_into_voxel_index):
+        if index_into_voxel_index >= self.stored_voxels:
+            return None
+        else:
+            return self.voxel_index[index_into_voxel_index][3]
 
 
 

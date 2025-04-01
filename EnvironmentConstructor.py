@@ -1,10 +1,7 @@
-import math
 import threading
 import time
 
 import numpy as np
-from pygame.threads import Thread
-from scipy.spatial import KDTree
 
 from OutlierFilter import OutlierFilter
 

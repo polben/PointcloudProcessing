@@ -6,6 +6,7 @@ import numpy as np
 
 from ComputeShader import ComputeShader
 from EnvironmentConstructor import EnvironmentConstructor
+from HeightIntervalFilter import HIF
 from LidarDataReader import LidarDataReader
 from OutlierFilter import OutlierFilter
 from OxtsDataReader import OxtsDataReader
@@ -23,7 +24,7 @@ class FunctionalTesting(unittest.TestCase):
 
         self.oxtsDataReader = OxtsDataReader(path)
         self.lidarDataReader = LidarDataReader(path=path, oxtsDataReader=self.oxtsDataReader, calibration=calibration,
-                                          targetCamera="02", max_read=10)
+                                          targetCamera="02", max_read=100)
 
         self.pointcloudAlignment = PointcloudAlignment(self.lidarDataReader, self.oxtsDataReader)
 
@@ -1078,7 +1079,7 @@ class FunctionalTesting(unittest.TestCase):
     def test_canRenderVoxels(self):
         pts, poses, rots = self.getAlignedLidarPoints(10)
 
-        v = Voxelizer(self.computeShader, voxel_size=0.2)
+        v = Voxelizer(self.computeShader, None, voxel_size=0.2)
 
         pc = pts[0]
 
@@ -1093,42 +1094,132 @@ class FunctionalTesting(unittest.TestCase):
         lines = v.getVoxelsAsLineGrid()
         self.renderer.setLines(lines)
 
-    def test_can_renderVoxelData(self):
+    def generate_3d_grid(self, x_width, y_width, z_width, spacing=1.0):
+        x = np.arange(0, x_width, spacing)
+        y = np.arange(0, y_width, spacing)
+        z = np.arange(0, z_width, spacing)
+
+        X, Y, Z = np.meshgrid(x, y, z, indexing='ij')  # 'ij' for proper 3D ordering
+        grid_points = np.vstack([X.ravel(), Y.ravel(), Z.ravel()]).T  # Shape (N, 3)
+
+        return grid_points
+
+    def test_voxelIntegrityLidar(self):
         pts, poses, rots = self.getAlignedLidarPoints(10)
 
-        v = Voxelizer(self.computeShader, voxel_size=0.4)
+        v = Voxelizer(self.computeShader, None, voxel_size=0.4)
 
         pc = pts[0]
 
-        st = time.time()
+
         v.addPoints(pc)
-        print("expanson: " + str(time.time()-st))
+
+        for i in range(v.stored_voxels):
+            vox_data_ptr = v.voxel_index[i][3]
+            count = v.voxel_data[vox_data_ptr][0]
+            if count > 1:
+                pt_indexes = v.voxel_data[vox_data_ptr][1:count]
+                pp = v.added_points[pt_indexes][:, :3]
+
+                self.renderer.addPoints(pp, self.randcolor())
 
 
-        voxels = v.getVoxelPositions()
 
-        self.renderer.addPoints(voxels)
+
+    def test_voxelIntegrityGrid(self):
+        pts, poses, rots = self.getAlignedLidarPoints(10)
+
+        v = Voxelizer(self.computeShader, None, voxel_size=0.4)
+
+        # pc = pts[0]
+        points = []
+        added = []
+        for i in range(10):
+            pc = self.generate_3d_grid(0.6, 0.6, 0.6, 0.04) + PointcloudAlignment.randomTranslation1() * 2
+            added.append(self.renderer.addPoints(pc))
+
+            points.append(pc)
+
+        time.sleep(2)
+        for a in added:
+            self.renderer.freePoints(a)
+
+        for p in points:
+            v.addPoints(p)
+
+
+        for i in range(v.getStoredVoxelCount()):
+            vox_dat_ind = v.getVoxelDataIndexAt(i)
+            count = v.getStoredCount(vox_dat_ind)
+            if count > 1:
+                pp = v.getStoredPoints(vox_dat_ind)
+
+                self.renderer.addPoints(pp, self.randcolor())
+
+
+                time.sleep(0.1)
 
         lines = v.getVoxelsAsLineGrid()
         self.renderer.setLines(lines)
 
-        for i in range(v.stored_voxels):
-            stored = v.voxel_data[i][0]
-            if stored > 1:
-                pt_indexes = v.voxel_data[i][1:stored]
-                pts = v.added_points[pt_indexes][:, :3]
-                self.renderer.addPoints(pts, self.green)
+    def test_canFilterStaticVoxels(self):
+        pts, poses, rots = self.getAlignedLidarPoints(100)
 
-        """st = time.time()
-        v.addPoints(pts[1])
-        print("2nd expanson: " + str(time.time()-st))"""
+        v = Voxelizer(self.computeShader, self.renderer, voxel_size=0.5)
+
+        time.sleep(10)
+
+        for i in range(0, 80):
+            pc = pts[i]
+
+            st = time.time()
+            v.addPoints(pc)
+            print("expanson: " + str(time.time() - st))
+
+
+
+    def test_can_renderVoxelData(self):
+            pts, poses, rots = self.getAlignedLidarPoints(10)
+
+            v = Voxelizer(self.computeShader, None, voxel_size=0.4)
+
+
+
+            voxels = []
+
+
+            for i in range(0, 10):
+                pc = pts[i]
+
+                st = time.time()
+                v.addPoints(pc)
+                print("expanson: " + str(time.time() - st))
+
+
+
+            voxels = []
+            for i in range(v.getStoredVoxelCount()):
+                vdat_ind = v.getVoxelDataIndexAt(i)
+                stored = v.getStoredCount(vdat_ind)
+                if stored > 10:
+                    vox_points = v.getStoredPoints(vdat_ind)
+                    voxels.append(self.renderer.addPoints(vox_points, self.randcolor()))
+
+
+
+
+
+
+            """lines = v.getVoxelsAsLineGrid()
+            self.renderer.setLines(lines)"""
+
 
 
 
     def test_shouldExpand(self):
         pts, poses, rots = self.getAlignedLidarPoints(10)
 
-        v = Voxelizer(self.computeShader, voxel_size=0.4)
+        v = Voxelizer(self.computeShader, None, voxel_size=0.4)
 
         pc = pts[0]
 
@@ -1163,7 +1254,7 @@ class FunctionalTesting(unittest.TestCase):
     def test_gpuCanVoxelize(self):
         pts, poses, rots = self.getAlignedLidarPoints(10)
 
-        v = Voxelizer(self.computeShader, voxel_size=0.5)
+        v = Voxelizer(self.computeShader, None, voxel_size=0.5)
 
         pc = pts[0]
 
@@ -1182,4 +1273,69 @@ class FunctionalTesting(unittest.TestCase):
         st = time.time()
         v.addPoints(pc)
         print("expanson: " + str(time.time() - st))
+
+
+
+    def test_HIF_local_pillars(self):
+            pts, poses, rots = self.getAlignedLidarPoints(50)
+
+            hif = HIF(alpha=0.3, beta=0.7, pillar_delta=1.0)
+
+
+
+            pc = pts[0]
+
+            local_pillars = hif.getLocalPillars(pc)
+            grid = HIF.getPillarPoints(local_pillars, hif.d)
+
+            for g in grid:
+                self.renderer.addPoints(g)
+
+            self.renderer.addPoints(pc, np.array([255,0,0]))
+
+
+    def test_hif(self):
+        pts, poses, rots = self.getAlignedLidarPoints(50)
+
+        hif = HIF(alpha=0.3, beta=0.7, pillar_delta=1.0)
+
+        prev_ps = []
+        for i in range(10):
+            print(i)
+
+            pc = pts[i]
+            pillar_grid = hif.addNewScanJustPillars(pc)
+
+            if prev_ps:
+                for pt in prev_ps:
+                    self.renderer.freePoints(pt)
+                prev_ps = []
+
+            if pillar_grid is not None:
+
+                for pgrid in pillar_grid:
+                    prev_ps.append(self.renderer.addPoints(pgrid))
+
+            time.sleep(1)
+
+    def test_HIF_pillars_with_global(self):
+        pts, poses, rots = self.getAlignedLidarPoints(50)
+
+        hif = HIF(alpha=0.3, beta=0.7, pillar_delta=1.0)
+
+        pc = pts[0]
+
+        hif.addNewScan(pc)
+
+        pc = pts[1]
+
+        hif.addNewScan(pc)
+
+        pc = pts[1]
+
+        hif.addNewScan(pc)
+
+
+
+
 

@@ -618,7 +618,7 @@ class ComputeShader:
 
         return corr_indexes, dists
 
-    def prepareDispatchVoxelizer(self, np_points, voxel_index, voxel_data, voxel_size, stored_voxel_num, begin_index, debug=False):
+    def prepareDispatchVoxelizer(self, np_points, voxel_index, voxel_data, voxel_size, stored_voxel_num, begin_index, max_points_to_store, realloc_needed, prev_stored_voxels, debug=False):
         self.setActiveProgram(self.voxel_shader)
 
         st = time.time()
@@ -632,9 +632,29 @@ class ComputeShader:
         glBufferData(GL_SHADER_STORAGE_BUFFER, voxel_index.nbytes, voxel_index, GL_DYNAMIC_DRAW)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_data)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, voxel_data.nbytes, voxel_data, GL_DYNAMIC_DRAW)
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+        if realloc_needed:
+            print("realloced voxdat")
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_data)
+            glBufferData(GL_SHADER_STORAGE_BUFFER, voxel_data.nbytes, voxel_data, GL_DYNAMIC_DRAW)
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+        else:
+            print("subbuffered voxdat")
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_data)
+            byte_offset = prev_stored_voxels * max_points_to_store * 4
+            new_data_len = (stored_voxel_num - prev_stored_voxels) * max_points_to_store * 4
+
+            new_data = voxel_data[prev_stored_voxels:stored_voxel_num]
+
+            # test sizes
+            """a = new_data.nbytes
+            old_data = voxel_data[:prev_stored_voxels]
+            b = old_data.nbytes"""
+
+            data_ptr = new_data.ctypes.data_as(ctypes.POINTER(ctypes.c_char))
+
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER, byte_offset, new_data_len, data_ptr)
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_unknown_points)
         glBufferData(GL_SHADER_STORAGE_BUFFER, unknown_points.nbytes, unknown_points, GL_DYNAMIC_DRAW)
@@ -651,7 +671,7 @@ class ComputeShader:
         self.bufferSubdata(np_points, self.ssbo_points_a)
 
         location = glGetUniformLocation(self.voxel_shader, "voxel_lens_data")
-        lens_data = np.array([len(np_points), stored_voxel_num, begin_index, 0]).astype(np.uint32)
+        lens_data = np.array([len(np_points), stored_voxel_num, begin_index, max_points_to_store]).astype(np.uint32)
         glUniform4ui(location, lens_data[0], lens_data[1], lens_data[2], lens_data[3])
 
         location = glGetUniformLocation(self.voxel_shader, "voxel_size")
@@ -665,13 +685,7 @@ class ComputeShader:
 
 
         st = time.time()
-        out_vind = np.zeros_like(voxel_index).astype(np.int32)
         out_vdat = np.zeros_like(voxel_data).astype(np.int32)
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_index)
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, out_vind.nbytes,
-                           out_vind.ctypes.data_as(c_void_p))
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_data)
@@ -690,11 +704,10 @@ class ComputeShader:
                                debug_data.ctypes.data_as(c_void_p))
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
-        # print("read time: " + str(time.time()-st))
         if debug:
-            return unknown_points, out_vind, out_vdat, debug_data
+            return unknown_points, out_vdat, debug_data
         else:
-            return unknown_points, out_vind, out_vdat, None
+            return unknown_points, out_vdat, None
 
 
 

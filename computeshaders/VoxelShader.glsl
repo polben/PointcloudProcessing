@@ -11,7 +11,7 @@ layout(std430, binding = 8) buffer VoxelIndex {
 };
 
 layout(std430, binding = 9) buffer VoxelData {
-    int voxel_data[][4096];
+    int voxel_data[][1024];
 };
 
 layout(std430, binding = 10) buffer UnknownPointInds {
@@ -128,7 +128,9 @@ void main(){
     }else{
         int voxel_data_index = voxel_index[voxel_index_entry][3];
         int stored_points_num = atomicAdd(voxel_data[voxel_data_index][0], 1);
-        voxel_data[voxel_data_index][1 + stored_points_num] = int(voxel_lens_data[2]) + int(idx);
+        if (stored_points_num < int(voxel_lens_data[3]) - 1) {
+            voxel_data[voxel_data_index][1 + stored_points_num] = int(voxel_lens_data[2]) + int(idx);
+        }
     }
 
 }
