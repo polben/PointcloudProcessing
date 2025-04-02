@@ -4,12 +4,13 @@ import time
 import numpy as np
 
 from OutlierFilter import OutlierFilter
+from Voxelizer import Voxelizer
 
 
 class EnvironmentConstructor:
 
 
-    def __init__(self, renderer, oxtsdatareader, lidardatareader, icpcontainer):
+    def __init__(self, renderer, oxtsdatareader, lidardatareader, icpcontainer, computeShader):
         self.renderer = renderer
         self.oxts = oxtsdatareader
         self.lidar = lidardatareader
@@ -42,7 +43,7 @@ class EnvironmentConstructor:
 
 
         self.outlier_filter = OutlierFilter(icpContainer=icpcontainer, dbscan_eps=0.5, dbscan_minpt=10, do_threading=True)
-
+        self.voxelizer = Voxelizer(computeShader, self.renderer, 0.5)
 
         self.previous_aligned_data = [] # (points, colors)
         self.prev_poses = []
@@ -171,6 +172,7 @@ class EnvironmentConstructor:
 
 
             aligned_points = (current_rotation @ points.T).T + estimated_position
+
 
             prev_aligned_points, prev_colors = self.previous_aligned_data[self.total_frame_counter - 1]
             if removeOutliers:

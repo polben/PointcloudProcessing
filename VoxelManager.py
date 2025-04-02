@@ -26,8 +26,22 @@ class VoxelManager:
 
         self.prev_frame = None
 
-    def frameVoxelized(self, frame_points):
-        self.frame_counter += 1
+        self.displayed_voxels = []
+
+    def frameVoxelized(self, voxel_points):
+        # why not send just voxel ids to render?: that way the whole voxel data would have to be sent each frame
+        # either buffering line by line, since nothing gurantees voxels get full/static next to each other
+
+        self.displayed_voxels.append(self.renderer.addPoints(voxel_points, self.randcolor()))
+
+
+    def randcolor(self):
+        return np.random.rand(3, )
+
+
+
+
+    """        self.frame_counter += 1
 
         if self.prev_frame is not None:
             self.renderer.freePoints(self.prev_frame)
@@ -92,8 +106,4 @@ class VoxelManager:
 
 
 
-        a = 0
-
-
-    def randcolor(self):
-        return np.random.rand(3, )
+        a = 0"""

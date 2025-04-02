@@ -15,7 +15,7 @@ class Voxelizer:
 
     def __init__(self, compute_shader, renderer, voxel_size = 1):
 
-        self.voxel_size = voxel_size
+        self.voxel_size = np.array([voxel_size]).astype(np.float32)
 
 
         self.max_points = 1024 # has to be fixed, same as shader
@@ -24,6 +24,7 @@ class Voxelizer:
 
         self.voxel_index = None # (M, 4) growing * 2, [x, y, z voxel coord, pointer to voxel data]
         self.voxel_data = None # (M, 1 + max_points), growing * 2, [0]: number of points sored [1:] indexes of stored points
+        self.voxel_stats = None # floats, same shape as index, BUT paralell with data with 1-1 correspondence
         self.stored_voxels = 0
 
         self.added_points = None
@@ -38,19 +39,22 @@ class Voxelizer:
         self.voxman = VoxelManager(self, renderer)
 
 
-
+        self.last_run_realloc = False
 
 
 
     def addPoints(self, np_points, printt=False):
-        self.handleAddingPoints(np_points)
+        self.handleAddingPoints(np_points.astype(np.float32))
 
+        # when reallocation happens, of voxel data for example, it needs to be buffered back
+        # currently its working because im reading the whole thing back to memory
+        # but when im reallocating on the cpu, i have to reallocate with actual data
         current_stored_begin_index = self.last_added_point - len(np_points) # points exactly to the first point in the current cloud
 
         start = time.time()
         gpu = True
         if gpu:
-            unknown_points, self.voxel_data, _ = self.compute.prepareDispatchVoxelizer(
+            unknown_points, _ = self.compute.prepareDispatchVoxelizer(
                 np_points=np_points,
                 voxel_index=self.voxel_index,
                 voxel_data=self.voxel_data,
@@ -70,20 +74,42 @@ class Voxelizer:
                 stored_voxel_num=self.stored_voxels,
                 begin_index=current_stored_begin_index,
             )
+
+
+        self.voxel_stats, voxels_to_render = self.compute.prepareDispatchVoxelStager(self.stored_voxels, self.max_points, self.voxel_stats, stage_everything=False)
+
         if printt:
             print("gpu > unknown points: " + str(unknown_points[0]) + " " + str(time.time()-start))
 
         start = time.time()
 
+
         self.realloc_needed, self.prev_stored_voxels = self.storeUnknownPoints(unknown_points, printt)
+        self.last_run_realloc = self.realloc_needed
         if printt:
             print("stored unknown: " + str(time.time()-start))
 
         if self.renderer is not None:
-            self.voxman.frameVoxelized(np_points)
+            for v_slice in voxels_to_render:
+                points = self.getStoredPointsFromVoxelDataSlice(v_slice)
+                self.voxman.frameVoxelized(points)
+
+    def refreshVoxelData(self):
+        if not self.last_run_realloc:
+            self.compute.getFullVoxelData(self.stored_voxels, self.max_points, self.voxel_data)
+
+    def stageAllRemaningVoxels(self):
+        while True:
+            self.voxel_stats, voxels_to_render = self.compute.prepareDispatchVoxelStager(self.stored_voxels, self.max_points, self.voxel_stats, stage_everything=True)
+            if self.renderer is not None:
+                for v_slice in voxels_to_render:
+                    points = self.getStoredPointsFromVoxelDataSlice(v_slice)
+                    self.voxman.frameVoxelized(points)
+            if not np.any(voxels_to_render):
+                break
 
     def vectorizedGetVoxelCoord(self, np_points):
-        return np.ceil(np_points / self.voxel_size).astype(np.int32)
+        return np.ceil(np_points.astype(np.float32) / self.voxel_size).astype(np.int32) # make sure in video card convention :))))
 
     def storeUnknownPoints(self, unknown_points, printt=False):
         st = time.time()
@@ -97,25 +123,43 @@ class Voxelizer:
 
         was_realloc = False
         prev_stored_voxels = self.stored_voxels
+        voxel_data_updated = False
 
         if vectorized:
-            points_to_insert = self.added_points[unknown_points[1:unknown_length]][:, :3]
+            unknown_point_indicies = unknown_points[1:unknown_length+1]
+            points_to_insert = self.added_points[unknown_point_indicies][:, :3]
+
             point_voxel_ids = self.vectorizedGetVoxelCoord(points_to_insert)
+
             unique_ids, index, inverse, counts = np.unique(point_voxel_ids, return_inverse=True, return_counts=True, return_index=True, axis=0)
 
             sort_order = np.argsort(inverse)
 
-            sorted_point_ids = unknown_points[1:unknown_length][sort_order]
+            sorted_point_ids = unknown_points[1:unknown_length+1][sort_order]
 
             last = 0
             voxel_id_index = 0
+            inserted_this_round = []
             for c in counts:
+
                 unique_voxel_id = unique_ids[voxel_id_index]
+
+                if np.array_equal(unique_voxel_id[:3], np.array([54, 0, -39]).astype(np.int32)):
+                    f = 0
+
+                inserted_this_round.append(unique_voxel_id)
                 voxel_point_ids = sorted_point_ids[last:last + c]
 
                 voxel_index_entry, ins = self.findVoxelId(self.voxel_index, unique_voxel_id)
                 if voxel_index_entry != -1:
-                    raise RuntimeError("Here all unkown points should have a new voxel created")
+                    # continue
+                    for i in inserted_this_round:
+                        if np.array_equal(i, unique_voxel_id):
+                            b = 0
+                    a = 0
+                    raise RuntimeError("Here all unknown points should have a new voxel created")
+
+                    # might be a floating point precision error on gpu side
 
                 values_to_move = self.voxel_index[ins:self.stored_voxels]
                 if len(values_to_move) > 0:
@@ -125,13 +169,30 @@ class Voxelizer:
                 self.voxel_index[ins][3] = self.stored_voxels
 
                 self.voxel_data[self.stored_voxels][0] = len(voxel_point_ids)
-                self.voxel_data[self.stored_voxels][1:len(voxel_point_ids)+1] = voxel_point_ids
+
+                #self.voxel_data[self.stored_voxels][1:len(voxel_point_ids)+1] = voxel_point_ids
+                max_pts = min(len(voxel_point_ids), self.max_points - 1)
+                try:
+                    self.voxel_data[self.stored_voxels][1:max_pts+1] = voxel_point_ids[:max_pts]
+                except ValueError as e:
+                    raise e
 
                 self.stored_voxels += 1
 
                 if self.stored_voxels == len(self.voxel_index):
                     self.voxel_index = np.vstack([self.voxel_index, np.full_like(self.voxel_index, self.bigint)])
+
+                    # during a realloc data has to be fetched, because during next realloc on gpu, data is lost
+                    if not voxel_data_updated and prev_stored_voxels > 0:
+                        self.compute.getFullVoxelData(prev_stored_voxels, self.max_points, self.voxel_data)
+                        voxel_data_updated = True
+
                     self.voxel_data = np.vstack([self.voxel_data, np.zeros_like(self.voxel_data)])
+
+                    # !!!!! double check 0.5 range setting
+                    self.voxel_stats = np.vstack([self.voxel_stats, np.zeros_like(self.voxel_stats)])
+                    self.voxel_stats[:, 0][self.stored_voxels:] = 0.5
+
                     was_realloc = True
 
                 voxel_id_index += 1
@@ -162,7 +223,17 @@ class Voxelizer:
 
                     if self.stored_voxels == len(self.voxel_index):
                         self.voxel_index = np.vstack([self.voxel_index, np.full_like(self.voxel_index, self.bigint)])
+
+                        if not voxel_data_updated and prev_stored_voxels > 0:
+                            self.compute.getFullVoxelData(prev_stored_voxels, self.max_points, self.voxel_data)
+                            voxel_data_updated = True
+
                         self.voxel_data = np.vstack([self.voxel_data, np.zeros_like(self.voxel_data)])
+
+                        # !!!!! double check 0.5 range setting
+                        self.voxel_stats = np.vstack([self.voxel_stats, np.zeros_like(self.voxel_stats)])
+                        self.voxel_stats[:, 0][self.stored_voxels:] = 0.5
+
                         was_realloc = True
 
                 else:
@@ -253,8 +324,13 @@ class Voxelizer:
         return self.voxel_data[:, 0]
 
     def initVoxels(self, init_size=100):
-        self.voxel_index = np.full((4096, 4), self.bigint).astype(np.int32)
-        self.voxel_data = np.zeros((4096, self.max_points)).astype(np.int32)
+        initial_voxel_buffer_size = 4096
+
+        self.voxel_index = np.full((initial_voxel_buffer_size, 4), self.bigint).astype(np.int32)
+        self.voxel_data = np.zeros((initial_voxel_buffer_size, self.max_points)).astype(np.int32)
+        self.voxel_stats = np.zeros((initial_voxel_buffer_size, 4)).astype(np.float32)
+        self.voxel_stats[:, 0] = 0.5 # initial probability
+
 
     def getVoxelCoord(self, point):
         # this is a grid of voxels of sidelength self.voxel_size
@@ -265,7 +341,7 @@ class Voxelizer:
 
     def handleAddingPoints(self, np_points):
         if self.added_points is None:
-            self.added_points = np.empty((len(np_points) * 2, 4))
+            self.added_points = np.empty((len(np_points) * 2, 4)).astype(np.float32)
             self.added_points[:len(np_points), :3] = np_points  # Assign directly
             self.last_added_point += len(np_points)
 
@@ -446,6 +522,11 @@ class Voxelizer:
         max_stored = min(stored + 1, self.max_points)
         pt_indexes = self.voxel_data[voxel_data_index][1:max_stored]
         return self.added_points[pt_indexes][:, :3]
+
+    def getStoredPointsFromVoxelDataSlice(self, slice):
+        stored = slice[0]
+        point_inds = slice[1: min(stored + 1, self.max_points)]
+        return self.added_points[point_inds][:, :3]
 
     def getStoredVoxelCount(self):
         return self.stored_voxels

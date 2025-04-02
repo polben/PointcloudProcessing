@@ -55,6 +55,10 @@ class ComputeShader:
 
         self.ssbo_debug_buffer = None
 
+        self.ssbo_voxel_stage = None
+        self.ssbo_single_counter = None
+        self.ssbo_voxel_stat = None
+
         self.origin = None
         self.origin_location = None
         self.debug_location = None
@@ -79,12 +83,14 @@ class ComputeShader:
         self.normals_out_a = None
         self.normals_out_b = None
 
+        self.voxel_stage_out = None
 
         self.least_squares_point = None
         self.nearest_neighbour = None
         self.normal_shader = None
         self.point_plane_shader = None
         self.voxel_shader = None
+        self.voxel_stage = None
 
         self.main_shadercode_regex = "void main(){}"
 
@@ -112,6 +118,7 @@ class ComputeShader:
         self.normal_shader = self.create_shader_program(self.glslFile("NormalShader.glsl"))
         self.point_plane_shader = self.create_shader_program(self.glslFile("LeastSquaresPlane.glsl"))
         self.voxel_shader = self.create_shader_program(self.glslFile("VoxelShader.glsl"), extend=False)
+        self.voxel_stage = self.create_shader_program(self.glslFile("VoxelStage.glsl"), extend=False)
 
     def prepareBuffers(self):
         self.ssbo_points_a = glGenBuffers(1)
@@ -128,6 +135,12 @@ class ComputeShader:
         self.ssbo_unknown_points = glGenBuffers(1)
 
         self.ssbo_debug_buffer = glGenBuffers(1)
+
+        self.ssbo_single_counter = glGenBuffers(1)
+        self.ssbo_voxel_stat = glGenBuffers(1)
+        self.ssbo_voxel_stage = glGenBuffers(1)
+
+
 
         self.points_a = np.zeros((self.maxPointsPerCloud, 4)).astype(np.float32)
         self.points_b = np.zeros((self.maxPointsPerCloud, 4)).astype(np.float32)
@@ -187,6 +200,9 @@ class ComputeShader:
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, self.ssbo_voxel_data)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, self.ssbo_unknown_points)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, self.ssbo_debug_buffer)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 12, self.ssbo_voxel_stage)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 13, self.ssbo_single_counter)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 14, self.ssbo_voxel_stat)
 
 
     def reallocate_out(self, lens_data):
@@ -252,6 +268,18 @@ class ComputeShader:
         if self.ssbo_debug_buffer is not None:
             glDeleteBuffers(1, [self.ssbo_debug_buffer])
             self.ssbo_debug_buffer = None
+
+        if self.ssbo_voxel_stage is not None:
+            glDeleteBuffers(1, [self.ssbo_voxel_stage])
+            self.ssbo_voxel_stage = None
+
+        if self.ssbo_single_counter is not None:
+            glDeleteBuffers(1, [self.ssbo_single_counter])
+            self.ssbo_single_counter = None
+
+        if self.ssbo_voxel_stat is not None:
+            glDeleteBuffers(1, [self.ssbo_voxel_stat])
+            self.ssbo_voxel_stat = None
 
     def bufferSubdata(self, np_array, ssbo):
         if np_array.shape[1] == 3:
@@ -618,6 +646,64 @@ class ComputeShader:
 
         return corr_indexes, dists
 
+    def prepareDispatchVoxelStager(self, stored_voxel_num, max_points, voxel_statistics, stage_everything=False):
+        self.setActiveProgram(self.voxel_stage)
+
+        max_staging_area = 512
+        if self.voxel_stage_out is None: # allocate voxel_stage once
+            self.voxel_stage_out = np.empty((max_staging_area, max_points)).astype(np.int32)
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_stage)
+            glBufferData(GL_SHADER_STORAGE_BUFFER, self.voxel_stage_out.nbytes, None, GL_DYNAMIC_DRAW) # None data ptr
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_stat)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, voxel_statistics.nbytes, voxel_statistics, GL_DYNAMIC_DRAW)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        single_counter_buffer = np.zeros((1, 16)).astype(np.int32)
+        single_counter_buffer[0][3] = stored_voxel_num
+        single_counter_buffer[0][2] = max_points
+        single_counter_buffer[0][1] = max_staging_area
+
+        if stage_everything:
+            single_counter_buffer[0][4] = 1
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_single_counter)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, single_counter_buffer.nbytes, single_counter_buffer, GL_DYNAMIC_DRAW)  # None data ptr
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+
+
+        self.dispatchCurrentProgramWait(stored_voxel_num)
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_single_counter)
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, single_counter_buffer.nbytes,
+                           single_counter_buffer.ctypes.data_as(c_void_p))
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_stat)
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, voxel_statistics.nbytes,
+                           voxel_statistics.ctypes.data_as(c_void_p))
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        probs = voxel_statistics[voxel_statistics[:, 0] > 0.9]
+        if len(probs) > 0:
+            a = 0
+
+        if single_counter_buffer[0][0] > 0:
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_stage)
+            new_data_len = single_counter_buffer[0][0] * max_points * 4
+
+            # !!!!
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, self.voxel_stage_out.nbytes,
+                               self.voxel_stage_out.ctypes.data_as(c_void_p)) # buffering into a bigger than needed np array!!!
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+            return voxel_statistics, self.voxel_stage_out[:single_counter_buffer[0][0]]
+
+        return voxel_statistics, []
+
+
     def prepareDispatchVoxelizer(self, np_points, voxel_index, voxel_data, voxel_size, stored_voxel_num, begin_index, max_points_to_store, realloc_needed, prev_stored_voxels, debug=False):
         self.setActiveProgram(self.voxel_shader)
 
@@ -675,7 +761,7 @@ class ComputeShader:
         glUniform4ui(location, lens_data[0], lens_data[1], lens_data[2], lens_data[3])
 
         location = glGetUniformLocation(self.voxel_shader, "voxel_size")
-        glUniform1f(location, voxel_size)
+        glUniform1f(location, voxel_size[0])
         # print("prep time: " + str(time.time()-st))
 
 
@@ -685,13 +771,13 @@ class ComputeShader:
 
 
         st = time.time()
-        out_vdat = np.zeros_like(voxel_data).astype(np.int32)
+        # out_vdat = np.zeros_like(voxel_data).astype(np.int32)
 
 
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_data)
+        """glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_data)
         glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, out_vdat.nbytes,
                            out_vdat.ctypes.data_as(c_void_p))
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)"""
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_unknown_points)
         glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, unknown_points.nbytes,
@@ -705,11 +791,19 @@ class ComputeShader:
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
         if debug:
-            return unknown_points, out_vdat, debug_data
+            return unknown_points, debug_data
         else:
-            return unknown_points, out_vdat, None
+            return unknown_points, None
 
+    def getFullVoxelData(self, prev_stored_voxels, max_points, voxelizer_voxel_data):
+        temp_data_buffer = np.empty((prev_stored_voxels, max_points)).astype(np.int32)
 
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_data)
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, temp_data_buffer.nbytes,
+                           temp_data_buffer.ctypes.data_as(c_void_p))
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        voxelizer_voxel_data[:prev_stored_voxels] = temp_data_buffer
 
     def pad_points(self, points):
         if points.shape[1] == 4:

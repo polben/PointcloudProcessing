@@ -6,7 +6,6 @@ import numpy as np
 
 from ComputeShader import ComputeShader
 from EnvironmentConstructor import EnvironmentConstructor
-from HeightIntervalFilter import HIF
 from LidarDataReader import LidarDataReader
 from OutlierFilter import OutlierFilter
 from OxtsDataReader import OxtsDataReader
@@ -24,7 +23,7 @@ class FunctionalTesting(unittest.TestCase):
 
         self.oxtsDataReader = OxtsDataReader(path)
         self.lidarDataReader = LidarDataReader(path=path, oxtsDataReader=self.oxtsDataReader, calibration=calibration,
-                                          targetCamera="02", max_read=100)
+                                          targetCamera="02", max_read=200)
 
         self.pointcloudAlignment = PointcloudAlignment(self.lidarDataReader, self.oxtsDataReader)
 
@@ -1113,6 +1112,7 @@ class FunctionalTesting(unittest.TestCase):
 
 
         v.addPoints(pc)
+        v.refreshVoxelData()
 
         for i in range(v.stored_voxels):
             vox_data_ptr = v.voxel_index[i][3]
@@ -1147,6 +1147,7 @@ class FunctionalTesting(unittest.TestCase):
         for p in points:
             v.addPoints(p)
 
+        v.refreshVoxelData()
 
         for i in range(v.getStoredVoxelCount()):
             vox_dat_ind = v.getVoxelDataIndexAt(i)
@@ -1163,20 +1164,20 @@ class FunctionalTesting(unittest.TestCase):
         self.renderer.setLines(lines)
 
     def test_canFilterStaticVoxels(self):
-        pts, poses, rots = self.getAlignedLidarPoints(100)
+        pts, poses, rots = self.getAlignedLidarPoints(150)
 
         v = Voxelizer(self.computeShader, self.renderer, voxel_size=0.5)
 
-        time.sleep(10)
+        time.sleep(2)
 
-        for i in range(0, 80):
+        for i in range(0, 150):
             pc = pts[i]
 
             st = time.time()
             v.addPoints(pc)
             print("expanson: " + str(time.time() - st))
 
-
+        v.stageAllRemaningVoxels()
 
     def test_can_renderVoxelData(self):
             pts, poses, rots = self.getAlignedLidarPoints(10)
@@ -1195,7 +1196,7 @@ class FunctionalTesting(unittest.TestCase):
                 v.addPoints(pc)
                 print("expanson: " + str(time.time() - st))
 
-
+            v.refreshVoxelData()
 
             voxels = []
             for i in range(v.getStoredVoxelCount()):
@@ -1275,65 +1276,24 @@ class FunctionalTesting(unittest.TestCase):
         print("expanson: " + str(time.time() - st))
 
 
+    def test_voxelStats(self):
+        pts, poses, rots = self.getAlignedLidarPoints(30)
 
-    def test_HIF_local_pillars(self):
-            pts, poses, rots = self.getAlignedLidarPoints(50)
+        v = Voxelizer(self.computeShader, self.renderer, voxel_size=0.5)
 
-            hif = HIF(alpha=0.3, beta=0.7, pillar_delta=1.0)
+        time.sleep(2)
 
-
-
-            pc = pts[0]
-
-            local_pillars = hif.getLocalPillars(pc)
-            grid = HIF.getPillarPoints(local_pillars, hif.d)
-
-            for g in grid:
-                self.renderer.addPoints(g)
-
-            self.renderer.addPoints(pc, np.array([255,0,0]))
-
-
-    def test_hif(self):
-        pts, poses, rots = self.getAlignedLidarPoints(50)
-
-        hif = HIF(alpha=0.3, beta=0.7, pillar_delta=1.0)
-
-        prev_ps = []
-        for i in range(10):
-            print(i)
-
+        for i in range(0, 30):
             pc = pts[i]
-            pillar_grid = hif.addNewScanJustPillars(pc)
 
-            if prev_ps:
-                for pt in prev_ps:
-                    self.renderer.freePoints(pt)
-                prev_ps = []
+            st = time.time()
+            v.addPoints(pc)
+            print("expanson: " + str(time.time() - st))
 
-            if pillar_grid is not None:
 
-                for pgrid in pillar_grid:
-                    prev_ps.append(self.renderer.addPoints(pgrid))
 
-            time.sleep(1)
 
-    def test_HIF_pillars_with_global(self):
-        pts, poses, rots = self.getAlignedLidarPoints(50)
 
-        hif = HIF(alpha=0.3, beta=0.7, pillar_delta=1.0)
-
-        pc = pts[0]
-
-        hif.addNewScan(pc)
-
-        pc = pts[1]
-
-        hif.addNewScan(pc)
-
-        pc = pts[1]
-
-        hif.addNewScan(pc)
 
 
 
