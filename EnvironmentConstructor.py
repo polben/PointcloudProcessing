@@ -15,20 +15,15 @@ class EnvironmentConstructor:
         self.oxts = oxtsdatareader
         self.lidar = lidardatareader
         self.icp = icpcontainer
+        self.compute = computeShader
 
-        self.framekeys = self.lidar.getfilenames()
-        self.frameindex = 0
+        self.voxelizer = Voxelizer(self.compute, self.renderer)
 
-        self.rotation = np.eye(3)
-        self.time = 0
+        self.framekeys = None
+        self.frameindex = None
+
         self.reference_points = None
-        self.prev_added_points = None, None
-        self.prev_position = None
-        self.prev_velocity = None
         self.prev_origin = None
-        self.prev_rotation = None
-        self.angular_velocity = None
-        self.prev_time = None
 
         self.red = np.array([255, 0, 0])
         self.green = np.array([0, 255, 0])
@@ -36,19 +31,43 @@ class EnvironmentConstructor:
         self.white = np.array([255, 255, 255])
         self.colors = [self.red, self.green, self.blue, self.white]
 
-        self.local_frame_counter = 0
-        self.total_frame_counter = 0
+        self.local_frame_counter = None
+        self.total_frame_counter = None
         self.reset_origin_treshold = 5
 
 
 
-        self.outlier_filter = OutlierFilter(icpContainer=icpcontainer, dbscan_eps=0.5, dbscan_minpt=10, do_threading=True)
-        self.voxelizer = Voxelizer(computeShader, self.renderer, 0.5)
 
-        self.previous_aligned_data = [] # (points, colors)
+        self.prev_poses = None
+
+        self.inited = False
+
+
+    def init(self, voxel_size):
+        self.inited = False
+
+        self.framekeys = self.lidar.getfilenames()
+        self.frameindex = 0
+        self.local_frame_counter = 0
+        self.total_frame_counter = 0
         self.prev_poses = []
 
-        self.latest_filtered_data = (None, None)
+        self.voxelizer.init(voxel_size)
+
+
+        self.inited = True
+
+
+    def cleanup(self):
+        self.inited = False
+
+        self.frameindex = 0
+        self.total_frame_counter = 0
+        self.local_frame_counter = 0
+        self.prev_poses = []
+        self.framekeys = []
+
+        self.voxelizer.cleanup()
 
     def getNextFrameData(self, offset):
         key = self.framekeys[self.frameindex + offset]
@@ -120,11 +139,11 @@ class EnvironmentConstructor:
 
 
 
-    def calculateTransition_imu(self, current_lidar, current_oxts, point_to_plane=True, debug=False, iterations=20, cullColors=False, removeOutliers=False, pure_imu=False):
+    def calculateTransition_imu(self, current_lidar, current_oxts, point_to_plane=True, debug=False, iterations=20, separate_colors=False, removeOutliers=False, pure_imu=False):
 
         points, colors, intensities = current_lidar
 
-        if not cullColors:
+        if not separate_colors:
             colors = intensities
 
         current_velocity, current_horz_rot, current_vert_rot, current_time = self.getCurrentOxtsData(current_oxts=current_oxts)
@@ -141,8 +160,6 @@ class EnvironmentConstructor:
             self.renderer.addPoints([self.prev_position], self.red)
 
 
-            self.previous_aligned_data.append((self.reference_points, colors))
-
             imu_position = np.array([0.0, 0.0, 0.0])
             refined_position = np.array([0.0, 0.0, 0.0])
             imu_rotation = current_rotation
@@ -150,9 +167,14 @@ class EnvironmentConstructor:
             c_time = current_time
             self.prev_poses.append((imu_position, refined_position, imu_rotation, refined_rotation, c_time))
 
-            # self.renderer.addPoints(self.reference_points, colors)
+            self.voxelizer.separate_colors = separate_colors
+            self.voxelizer.filter_outliers = removeOutliers
 
             self.total_frame_counter += 1
+
+
+            self.voxelizer.addPoints(self.reference_points, colors)
+
 
 
 
@@ -174,18 +196,13 @@ class EnvironmentConstructor:
             aligned_points = (current_rotation @ points.T).T + estimated_position
 
 
-            prev_aligned_points, prev_colors = self.previous_aligned_data[self.total_frame_counter - 1]
-            if removeOutliers:
-                prev_filter_thread = threading.Thread(target=self.filterPoints, args=(aligned_points, prev_aligned_points, prev_colors))
-                prev_filter_thread.start()
-
             if not pure_imu:
 
                 full_iteration = False
                 iterations_to_do = iterations
                 if self.local_frame_counter + 1 >= self.reset_origin_treshold:
                     full_iteration = True
-                    iterations_to_do = 40
+                    iterations_to_do = 15
 
 
                 t_opt, R_opt = self.getRefinedTransition(reference_points=self.reference_points,
@@ -208,14 +225,10 @@ class EnvironmentConstructor:
                 if debug:
                     time.sleep(1)
 
-            if removeOutliers:
-                prev_filter_thread.join()
-                filtered_points, filtered_colors = self.latest_filtered_data
-                culled_refined_points, culled_refined_colors = self.cullColorPoints(filtered_points, filtered_colors, cullColors)
-                self.renderer.addPoints(culled_refined_points, culled_refined_colors)
-            else:
-                culled_refined_points, culled_refined_colors = self.cullColorPoints(prev_aligned_points, prev_colors, cullColors)
-                self.renderer.addPoints(culled_refined_points, culled_refined_colors)
+
+
+            self.voxelizer.addPoints(refined_points, colors)
+
 
             self.local_frame_counter += 1
 
@@ -227,7 +240,6 @@ class EnvironmentConstructor:
 
 
             self.prev_poses.append((next_pure_imu_position, refined_position, current_rotation, refined_rotation, current_time))
-            self.previous_aligned_data.append((refined_points, colors))
 
 
             self.renderer.addPoints([next_pure_imu_position], self.red)
@@ -242,15 +254,6 @@ class EnvironmentConstructor:
             print("frame " + str(self.total_frame_counter) + " time: " + str(time.time() - total_frame_time))
             print("---\n")
 
-
-    def filterPoints(self, ref_points, points_to_filter, colors_to_filter=None):
-
-        outlier_mask = self.outlier_filter.getOutlierIndexes(points_to_filter, ref_points, renderer=None, use_threads=True)
-
-        if colors_to_filter is not None:
-            self.latest_filtered_data = (points_to_filter[~outlier_mask], colors_to_filter[~outlier_mask])
-        else:
-            self.latest_filtered_data = (points_to_filter[~outlier_mask], None)
 
 
 

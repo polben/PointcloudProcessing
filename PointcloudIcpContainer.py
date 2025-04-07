@@ -12,8 +12,6 @@ from PointcloudAlignment import PointcloudAlignment
 class PointcloudIcpContainer:
 
     def __init__(self, computeShader, pointcloudAlignment):
-        self.data = {} # filename: original, objects, aligned
-        self.filenames = []
         self.compute = computeShader
         self.pointcloudAlignment = pointcloudAlignment
 
@@ -41,13 +39,22 @@ class PointcloudIcpContainer:
         self.compute.preparePointPlane(points_a, scan_lines, points_b, origin, False)
         # print("scan line and prep time: " + str(time.time() - st)) # ~0.1s
 
-    def dispatchPointToPlane(self, points_b):
-        st = time.time()
-        Hs, Bs = self.compute.dispatchPointPlane(points_b)
-        # print("dispatch time: " + str(time.time() - st))
 
-        H = np.nansum(Hs, axis=0)[:6, :6]
-        b = np.nansum(Bs, axis=0)[:6]
+
+
+
+
+
+    def dispatchPointToPlane(self, points_b):
+
+        # Hs, Bs = self.compute.dispatchPointPlane(points_b)
+        H, b = self.compute.dispatchPointPlane(points_b)
+
+
+
+
+        """H = np.nansum(Hs, axis=0)[:6, :6]
+        b = np.nansum(Bs, axis=0)[:6]"""
 
         try:
             delta_x = np.linalg.solve(H, -b)

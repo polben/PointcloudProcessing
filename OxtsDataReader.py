@@ -31,13 +31,19 @@ class OxtsDataReader:
             return path
 
 
-    def __init__(self, path):
+    def __init__(self):
+
+        self.inited = False
+
+
+
+    def init(self, path):
+
         self.root = self.getRoot(path)
 
         count = 0
 
         timestamps = self.readTimestamps(self.root + self.TIMESTAMPS)
-
 
         for filename in os.listdir(self.root + self.OXTS_DATA):
 
@@ -46,7 +52,9 @@ class OxtsDataReader:
                 count += 1
 
         if not len(self.datamap.keys()) == len(timestamps):
-            raise RuntimeError("Timestamps and farmes do not match: keys[" + str(len(self.datamap.keys())) + "] timestamps[" + str(len(timestamps)) + "]")
+            raise RuntimeError(
+                "Timestamps and farmes do not match: keys[" + str(len(self.datamap.keys())) + "] timestamps[" + str(
+                    len(timestamps)) + "]")
         else:
             print("Frames and timestamps loaded")
 
@@ -57,6 +65,17 @@ class OxtsDataReader:
         for k in self.datamap.keys():  # prepare oxts data for usage
             self.offsetmap[k] = self.getCartesian(self.datamap[k]) - gpsOrigin
             self.rotationMap[k] = self.readRotation(self.datamap[k]) - rotOrigin
+
+
+        self.inited = True
+
+    def cleanup(self):
+        self.inited = False
+        keys = list(self.datamap.keys())
+        for k in keys:
+            del self.datamap[k]
+            del self.offsetmap[k]
+            del self.rotationMap[k]
 
     def readTimestamps(self, filename):
         with open(filename, 'r') as file:

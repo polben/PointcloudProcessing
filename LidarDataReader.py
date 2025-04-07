@@ -5,7 +5,6 @@ from datetime import datetime
 import numpy as np
 
 from PIL import Image
-from scipy.constants import point
 
 
 class LidarDataReader:
@@ -13,27 +12,32 @@ class LidarDataReader:
 
 
     VELODYNE_DATA = "//velodyne_points//data//"
-    TIMESTAMPS = "//velodyne_points//timestamps.txt"
 
     DEFAULT_COLOR = np.array([255, 178, 102])
 
-    def getRoot(self, path):
-        files = os.listdir(path)
-        if len(files) == 1:
-            return self.getRoot(path + "//" + files[0])
-        else:
-            return path
-
-
-
-    def __init__(self, path, oxtsDataReader, calibration, targetCamera, max_read=10):
-        self.root = "UNDEFINED"
-        self.currentName = 0
+    def __init__(self):
         self.datamap = {}
-        self.timestamps = []
+        self.currentName = 0
+        self.root = None
+        self.calibrationPath = None
+        self.width = None
+        self.height = None
+        self.targetCamera = None
+        self.IMAGES = None
+        self.R_velo_to_cam = None
+        self.t_velo_to_cam = None
+        self.proj = None
+        self.rect_00 = None
+        self.c2c_rot = None
+        self.count = None
+        self.MAX_DATA_READ = None
 
-        self.root = self.getRoot(path)
-        self.oxtsDataReader = oxtsDataReader
+        self.inited = False
+
+    def init(self, path, calibration, targetCamera="02", max_read=10, ui=None):
+
+
+        self.root = path
         self.calibrationPath = calibration
         self.width = 0
         self.height = 0
@@ -47,12 +51,7 @@ class LidarDataReader:
 
         self.MAX_DATA_READ = max_read
 
-        self.timestamps = self.readTimestamps(self.root + self.TIMESTAMPS)
-
-
         files = os.listdir(self.root + self.VELODYNE_DATA)
-
-
 
         for filename in files:
             if filename.endswith(".bin"):
@@ -62,44 +61,42 @@ class LidarDataReader:
                 m = 2.5
                 np_points, intensities = np_points[dists > m], intensities[dists > m]
 
-
-
-
                 image = self.readImage(filename.strip(".bin") + ".png")
                 # np_points = self.filter_points(np_points)
 
-
-                rot = LidarDataReader.aligningRotation() # this actually is very close to the velo to cam rotation
+                rot = LidarDataReader.aligningRotation()  # this actually is very close to the velo to cam rotation
                 points_3d = (rot @ np_points.T).T
-
 
                 # points_3d = np_points
 
                 # https://github.com/sinaenjuni/Sensor_fusion_of_LiDAR_and_Camera_from_KITTI_dataset
                 lidar_to_view = self.R_velo_to_cam @ np_points.T
                 cam_0_points = lidar_to_view + self.t_velo_to_cam
-                cam_0_rect =  self.rect_00 @ cam_0_points
+                cam_0_rect = self.rect_00 @ cam_0_points
 
+                color_indexes, colors, points2d = self.project_np(cam_0_rect.T, self.proj, self.width, self.height,
+                                                                  image)
 
-                color_indexes, colors, points2d = self.project_np(cam_0_rect.T, self.proj, self.width, self.height, image)
-
-
-                # points2d *= 0.001
-                # self.datamap[filename.strip('.bin')] = (points2d.T, self.timestamps[count], colors)
-
-                colors = self.createColors(points_3d, color_indexes, colors)
                 int_cls = np.tile(intensities.T.reshape(-1, 1), 3)
-                self.datamap[filename.strip('.bin')] = (points_3d, self.timestamps[self.count], colors, int_cls)
+                colors = self.createColors(points_3d, color_indexes, colors, int_cls)
+                self.datamap[filename.strip('.bin')] = (points_3d, colors, int_cls)
                 self.count += 1
+
+                if ui is not None:
+                    ui.setFrameCounter(self.count, len(files))
 
             print(str(len(files)) + " / " + str(self.count))
             if self.count >= self.MAX_DATA_READ:
                 break
 
-        if not len(self.datamap.keys()) == len(self.timestamps):
-            raise RuntimeError("Timestamps and farmes do not match: keys[" + str(len(self.datamap.keys())) + "] timestamps[" + str(len(self.timestamps)) + "]")
-        else:
-            print("Frames and timestamps loaded")
+        self.inited = True
+
+    def cleanup(self):
+        self.inited = False
+
+        keys = list(self.datamap.keys())
+        for k in keys:
+            del self.datamap[k]
 
     def filter_points(self, np_points):
 
@@ -137,10 +134,11 @@ class LidarDataReader:
         # Filter points that are farther than the threshold
         return distances < threshold
 
-    def createColors(self, points, color_indexes, colors):
+    def createColors(self, points, color_indexes, colors, int_cls):
         point_count = len(points)
-        ret_colors = np.tile(self.DEFAULT_COLOR, (point_count, 1))
-        ret_colors[color_indexes] = colors
+        # ret_colors = np.tile(self.DEFAULT_COLOR, (point_count, 1))
+        ret_colors = int_cls.copy()
+        ret_colors[color_indexes] = colors / 255.0
         return ret_colors
 
     def project_np(self, points, projection_mat, width, height, image):
@@ -199,27 +197,6 @@ class LidarDataReader:
         rot = LidarDataReader.rotation(-np.pi / 2, 0, np.pi / 2)
         return rot
 
-    def readTimestamps(self, filename):
-        with open(filename, 'r') as file:
-            lines = file.readlines()
-        lines = [line.strip() for line in lines]
-
-        date_format = "%Y-%m-%d %H:%M:%S.%f"  # Format string to match the input format
-        timestamps = []
-
-        count = 0
-        for i in range(len(lines)):
-            count += 1
-            time = lines[i]
-            time = time.split('.')
-            time = time[0] + "." + time[1][:6]
-            timestamps.append( datetime.strptime(time, date_format) )
-
-            if count >= self.MAX_DATA_READ:
-                break
-
-        return timestamps
-
     def eatBytes(self, filename):
         with open(self.root + self.VELODYNE_DATA + filename, "rb") as f:
             bin_data = f.read()
@@ -239,30 +216,13 @@ class LidarDataReader:
     def getCurrentName(self):
         return self.getfilenames()[self.currentName]
 
-    def getNextWait(self):
-        currentTimestamp = self.datamap[self.getCurrentName()][1]
-        nextFrame = self.peekNextName()
-        if nextFrame == "UNDEFINED":
-            return 0
-
-        nextTimestamp = self.datamap[nextFrame][1]
-
-        delay = nextTimestamp - currentTimestamp
-        ms = delay.total_seconds() * 1000
-        return ms
 
     def getPoints(self, filename):
-        return np.ascontiguousarray(self.datamap[filename][0]), np.ascontiguousarray(self.datamap[filename][2]) # the actual points,
+        return np.ascontiguousarray(self.datamap[filename][0]), np.ascontiguousarray(self.datamap[filename][1]) # the actual points,
 
     def getPointsWithIntensities(self, filename):
-        return np.ascontiguousarray(self.datamap[filename][0]), np.ascontiguousarray(self.datamap[filename][2]), self.datamap[filename][3] # the actual points,
+        return np.ascontiguousarray(self.datamap[filename][0]), np.ascontiguousarray(self.datamap[filename][1]), self.datamap[filename][2] # the actual points,
 
-
-    def getTimeStamp(self, filename):
-        return self.datamap[filename][1] # the timestamp
-
-    def getDepth(self, filename):
-        return np.ascontiguousarray(self.datamap[filename][2]) # the timestamp
 
     def calcDepth(self, np_points):
         distances = np.linalg.norm(np_points, axis=1).astype(np.float64)
@@ -282,12 +242,6 @@ class LidarDataReader:
     def getfilenames(self):
         return list(self.datamap.keys())
 
-    def peekNextName(self):
-        if self.currentName < len(self.datamap.keys()) - 1:
-            return self.getfilenames()[self.currentName + 1]
-        else:
-            return "UNDEFINED"
-
     def getNextName(self):
         names = self.getfilenames()
 
@@ -301,8 +255,6 @@ class LidarDataReader:
     def resetNameIterator(self):
         self.currentName = 0
 
-    def getOxtsReader(self):
-        return self.oxtsDataReader
 
     @staticmethod
     def rotation(x, y, z):

@@ -16,12 +16,20 @@ class PointcloudAlignment:
     VELOCITY_MODE_ACCELERATION = 0
     VELOCITY_MODE_RAW_VELOCITY = 1
 
-    def __init__(self, lidarData, oxtsData):
+    def __init__(self):
+
+        self.inited = False
+        self.lidarData = None
+        self.oxtsData = None
+
+
+
+    def init(self, lidarData, oxtsData):
+        self.inited = False
 
         self.lidarData = lidarData
         self.oxtsData = oxtsData
         VELOCITY_MODE = self.VELOCITY_MODE_RAW_VELOCITY
-
 
         keyframes = self.lidarData.getfilenames()
 
@@ -69,8 +77,14 @@ class PointcloudAlignment:
                     next_oxts=next_oxts,
                     mode=self.MODE_REACTIVE)
 
-
             self.datamap[keyframes[i]] = pos, rot
+
+        self.inited = True
+
+    def cleanup(self):
+        self.inited = False
+        for k in self.datamap:
+            del self.datamap[k]
 
     def getTranslations(self):
         positions = []

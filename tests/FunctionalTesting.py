@@ -18,14 +18,13 @@ from Voxelizer import Voxelizer
 class FunctionalTesting(unittest.TestCase):
 
     def setUp(self):
-        path = "F://uni//3d-pointcloud//2011_09_26_drive_0005_sync"
-        calibration = "F://uni//3d-pointcloud//2011_09_26_calib//2011_09_26"
+        self.path = "F:/uni/3d-pointcloud/2011_09_26_drive_0005_sync/2011_09_26/2011_09_26_drive_0005_sync"
+        self.calibration = "F://uni//3d-pointcloud//2011_09_26_calib//2011_09_26"
 
-        self.oxtsDataReader = OxtsDataReader(path)
-        self.lidarDataReader = LidarDataReader(path=path, oxtsDataReader=self.oxtsDataReader, calibration=calibration,
-                                          targetCamera="02", max_read=200)
+        self.oxtsDataReader = OxtsDataReader()
+        self.lidarDataReader = LidarDataReader()
 
-        self.pointcloudAlignment = PointcloudAlignment(self.lidarDataReader, self.oxtsDataReader)
+        self.pointcloudAlignment = PointcloudAlignment()
 
         self.VOXEL_SIZE = 1
         self.renderer = Renderer(self.VOXEL_SIZE)
@@ -36,7 +35,7 @@ class FunctionalTesting(unittest.TestCase):
 
         self.tolerance = 1e-5 # 0.00001
 
-        self.environment = EnvironmentConstructor(self.renderer, self.oxtsDataReader, self.lidarDataReader, self.icpContainer)
+        self.environment = EnvironmentConstructor(self.renderer, self.oxtsDataReader, self.lidarDataReader, self.icpContainer, self.computeShader)
 
         self.red = np.array([255, 0, 0])
         self.green = np.array([0, 255, 0])
@@ -58,9 +57,36 @@ class FunctionalTesting(unittest.TestCase):
         return np.random.rand(3, )
 
     def test_canDisplayPoints(self):
-        pts = self.getLidarPoints()
+        self.lidarDataReader.init(self.path, self.calibration, "02", 10, None)
+        pts1 = self.getLidarPoints()
+        pts2 = self.getLidarPoints() + np.array([1, 1, 1])
 
-        self.renderer.addPoints(pts)
+        time.sleep(1)
+
+        pp1 = self.renderer.addPoints(pts1, np.array([255,0,0]))
+
+
+        time.sleep(1)
+
+        pp2 = self.renderer.addPoints(pts2, np.array([0,255,0]))
+
+
+
+        time.sleep(1)
+
+        self.renderer.freePoints(pp1)
+
+        time.sleep(1)
+
+        self.renderer.freePoints(pp2)
+
+        time.sleep(1)
+
+        self.renderer.addPoints(pts1)
+
+
+
+
 
     @staticmethod
     def getNormals(scan_lines, points, origin, icpContainer):
@@ -1163,21 +1189,28 @@ class FunctionalTesting(unittest.TestCase):
         lines = v.getVoxelsAsLineGrid()
         self.renderer.setLines(lines)
 
+    def test_idle(self):
+        time.sleep(10)
+
+
+    def test_showColors(self):
+        self.lidarDataReader.init(self.path, self.calibration, "02", 10, None)
+        self.oxtsDataReader.init(self.path)
+
+        points, colors, ints = self.lidarDataReader.getPointsWithIntensities(self.lidarDataReader.getfilenames()[0])
+        self.renderer.addPoints(points, colors)
+
     def test_canFilterStaticVoxels(self):
-        pts, poses, rots = self.getAlignedLidarPoints(150)
+        self.lidarDataReader.init(self.path, self.calibration, "02", 200, None)
+        self.oxtsDataReader.init(self.path)
 
-        v = Voxelizer(self.computeShader, self.renderer, voxel_size=0.5)
+        self.environment.init(voxel_size=0.5)
 
-        time.sleep(2)
-
-        for i in range(0, 150):
-            pc = pts[i]
-
-            st = time.time()
-            v.addPoints(pc)
-            print("expanson: " + str(time.time() - st))
-
-        v.stageAllRemaningVoxels()
+        for i in range(150):
+            lidardata, oxts = self.environment.getNextFrameData(0)
+            self.environment.calculateTransition_imu(lidardata, oxts, point_to_plane=True, debug=False,
+                                                           iterations=10, separate_colors=True, removeOutliers=True, pure_imu=False )
+        self.environment.voxelizer.stageAllRemaningVoxels()
 
     def test_can_renderVoxelData(self):
             pts, poses, rots = self.getAlignedLidarPoints(10)

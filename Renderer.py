@@ -82,8 +82,43 @@ class Renderer:
         self.maxlinecount = 0
         self.line_update_needed = False
 
+        self.initialize_close = False
+
         while not self.getInited():
             a = 0
+
+        self.grid_thread = threading.Thread(target=self.getGridLines, daemon=True)
+        self.grid_thread.start()
+
+
+
+    def getGridLines(self):
+        far = 200
+        current = -far
+
+        lines = []
+        colors = []
+        ground = -2
+
+        line_color = np.array([1.0, 1.0, 1.0]) * 0.25
+
+        resolution = 2
+
+        while current < far:
+            lines.extend([np.array([-current, ground, far]), np.array([-current, ground, -far])])
+            lines.extend([np.array([far, ground, -current]), np.array([-far, ground, -current])])
+
+            far_ratio = 1.0 - abs(current / float(far))
+            color = line_color * far_ratio
+            colors.extend([color, color, color, color])
+
+            self.setLines(lines, colors)
+            current += resolution
+
+            time.sleep(0.01)
+
+        print("grid finished")
+
 
     def getRenderingThread(self):
         return self.rendering_thread
@@ -102,14 +137,30 @@ class Renderer:
 
         self.inited = True
 
-        # self.shader_program = self.createShaderProgram(TEST_VERTEX_SHADER, CUBE_GEOMETRY_SHADER, CUBE_FRAGMENT_SHADER)
-        self.shader_program = self.createShaderProgram(TEST_VERTEX_SHADER, TEST_GEOMETRY_SHADER, TEST_FRAGMENT_SHADER)
-        self.lineShader = self.createLineShaderProgram(DEFAULT_VERTEX_SHADER, DEFAULT_FRAGMENT_SHADER)
+        self.shader_program = self.createShaderProgram(self.glslFile("VertexShader.glsl"),
+                                                       self.glslFile("GeometryShader.glsl"),
+                                                       self.glslFile("FragmentShader.glsl"))
+
+        self.lineShader = self.createLineShaderProgram(self.glslFile("LineVertexShader.glsl"),
+                                                       self.glslFile("LineFragmentShader.glsl"))
         self.setupVAO()
         self.setupLineVAO()
 
         max_width = glGetFloatv(GL_LINE_WIDTH_RANGE)
         print("Supported line width range:", max_width)
+
+    def glslFile(self, name):
+        path = "rendershaders//" + name
+        code = ""
+        try:
+            with open(path, "r") as f:
+                code = f.read()
+        except FileNotFoundError:
+            path = "..//rendershaders//" + name
+            with open(path, "r") as f:
+                code = f.read()
+
+        return code
 
     def getInited(self):
         return self.inited
@@ -134,11 +185,11 @@ class Renderer:
 
 
         frame_counter = 0
-        while True:
+        while not self.initialize_close:
             render_start = time.time()
 
             glfw.poll_events()
-            if glfw.window_should_close(self.window) or self.inputListener.esc:
+            if glfw.window_should_close(self.window):
                 glfw.set_window_should_close(self.window, True)
                 break
 
@@ -158,6 +209,7 @@ class Renderer:
                 self.updateVBO()
 
             glDrawArrays(GL_POINTS, 0, self.MemoryManager.getMaxPointIndex())
+            # print(self.MemoryManager.getMaxPointIndex())
             glBindVertexArray(0)
 
 
@@ -188,6 +240,9 @@ class Renderer:
 
         print("cleanup")
         self.cleanup()
+
+    def close(self):
+        self.initialize_close = True
 
     def setMVP(self, shader_program):
         modelLoc = glGetUniformLocation(shader_program, "model")
@@ -220,6 +275,8 @@ class Renderer:
             if colors[0][0] > 1 or colors[0][1] > 1 or colors[0][2] > 1:
                 colors = colors / 255.0
                 colors = colors.astype(np.float32)
+            else:
+                colors = colors.astype(np.float32)
 
         return colors
     def addPoints(self, np_points, colors=None):
@@ -235,6 +292,9 @@ class Renderer:
         with self.lock:
             self.MemoryManager.freeSpace(pointer)
 
+
+    def reset(self):
+        self.MemoryManager.dropPointers()
 
     def setLines(self, np_line_points, color=None):
         if len(np_line_points) % 2 != 0:
@@ -318,14 +378,25 @@ class Renderer:
 
     def updateVBO(self):
         if self.VBO is None:
+            print("Gen point buffer")
             self.VBO = glGenBuffers(1)
             glBindBuffer(GL_ARRAY_BUFFER, self.VBO)
             glBufferData(GL_ARRAY_BUFFER, self.MemoryManager.maxNumPoints * self.point_size, self.MemoryManager.points, GL_DYNAMIC_DRAW)
 
         if self.vbo_update_needed:
-            glBindBuffer(GL_ARRAY_BUFFER, self.VBO)
-            glBufferSubData(GL_ARRAY_BUFFER, 0, self.MemoryManager.getMaxPointIndex() * self.point_size, self.MemoryManager.points)
 
+            min_point = self.MemoryManager.last_buffered_point
+            max_point = self.MemoryManager.getMaxPointIndex()
+
+            # print("min" + str(min_point))
+            # print("max" + str(max_point))
+            offset = min_point * self.point_size
+            data_size = (max_point - min_point) * self.point_size
+
+            glBindBuffer(GL_ARRAY_BUFFER, self.VBO)
+            glBufferSubData(GL_ARRAY_BUFFER, offset, data_size, self.MemoryManager.points[min_point:max_point])
+
+            self.MemoryManager.markLastBufferPoint()
 
             self.vbo_update_needed = False
 
@@ -355,7 +426,7 @@ class Renderer:
         if self.lineVertices.nbytes > current_size:
             self.buffer_capacity = max(self.buffer_capacity * 2, self.lineVertices.nbytes)  # Double size or fit data
             glBufferData(GL_ARRAY_BUFFER, self.buffer_capacity, None, GL_DYNAMIC_DRAW)  # Reallocate with new size
-            print(f"Resized line buffer to {self.buffer_capacity} bytes")  # Debug print
+            # print(f"Resized line buffer to {self.buffer_capacity} bytes")  # Debug print
         else:
             # Simply update the existing buffer
             glBufferSubData(GL_ARRAY_BUFFER, 0, self.lineVertices.nbytes, self.lineVertices)

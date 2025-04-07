@@ -27,7 +27,8 @@ void getH(in float[6] J_in, uint idx, float valid) {
 void getB(in float[6] J_i, in float e_i, uint idx, float valid) {
     for (int i = 0; i < 6; i++) {
         float sum_val = J_i[i] * e_i; // J^T * e
-        Bs[idx][i] = sum_val * valid;
+        // Bs[idx][i] = sum_val * valid;
+        Hs[idx][i][7] = sum_val * valid;
     }
 
 }

@@ -28,12 +28,24 @@ class VoxelManager:
 
         self.displayed_voxels = []
 
-    def frameVoxelized(self, voxel_points):
+    def frameVoxelized(self, voxel_points, colors, separate_colors):
         # why not send just voxel ids to render?: that way the whole voxel data would have to be sent each frame
         # either buffering line by line, since nothing gurantees voxels get full/static next to each other
 
-        self.displayed_voxels.append(self.renderer.addPoints(voxel_points, self.randcolor()))
 
+        if not separate_colors:
+            self.displayed_voxels.append(self.renderer.addPoints(voxel_points, colors))
+        else:
+
+
+            color_mask = self.checkIfVoxelContainsColoredPoints(colors)
+            if len(color_mask) > 50:
+                self.displayed_voxels.append(self.renderer.addPoints(voxel_points[color_mask], colors[color_mask]))
+            else:
+                self.displayed_voxels.append(self.renderer.addPoints(voxel_points, colors))
+
+    def checkIfVoxelContainsColoredPoints(self, colors):
+        return np.where(~np.all(colors == colors[:, [0]], axis=1))[0]
 
     def randcolor(self):
         return np.random.rand(3, )

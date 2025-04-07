@@ -2,12 +2,13 @@
 
 layout(local_size_x = 64) in;
 
+layout(std430, binding = 8) buffer VoxelIndex {
+    ivec4 voxel_index[];
+};
+
 layout(std430, binding = 9) buffer VoxelData {
     int voxel_data[][1024];
 };
-
-
-
 
 layout(std430, binding = 12) buffer RenderStage {
     int voxel_stage_data[][1024];
@@ -58,6 +59,117 @@ bool tryStageVoxel(int idx, int point_count, int max_stage){
 
 }
 
+
+
+
+int binSearch(int axis, int value, bool findFirst, int from, int to){
+    int l = from;
+    int h = to;
+
+    int first_occ = -1;
+
+    while(l <= h){
+        int mid = int((l + h) / 2.0);
+        if (voxel_index[mid][axis] == value){
+            first_occ = mid;
+            if (findFirst){
+                h = mid - 1;
+            }else{
+                l = mid + 1;
+            }
+
+        }else if (voxel_index[mid][axis] < value){
+            l = mid + 1;
+        }else{
+            h = mid - 1;
+        }
+    }
+
+    return first_occ;
+}
+
+int findVoxelId(ivec3 voxel_coord){
+    if (int(counter_buffer[0][3]) == 0){ // stored_voxel_num
+        return -1;
+    }
+
+    int x_val = voxel_coord[0];
+    int y_val = voxel_coord[1];
+    int z_val = voxel_coord[2];
+
+    int axis_x = 0;
+    int axis_y = 1;
+    int axis_z = 2;
+
+    int first_occ_x = binSearch(axis_x, x_val, true, 0, int(counter_buffer[0][3]) - 1);
+    if (first_occ_x == -1){
+        return -1;
+    }
+
+    int last_occ_x = binSearch(axis_x, x_val, false, 0, int(counter_buffer[0][3]) - 1);
+
+    int first_occ_y = binSearch(axis_y, y_val, true, first_occ_x, last_occ_x);
+    if (first_occ_y == -1){
+        return -1;
+    }
+    int last_occ_y = binSearch(axis_y, y_val, false, first_occ_x, last_occ_x);
+
+
+    int first_occ_z = binSearch(axis_z, z_val, true, first_occ_y, last_occ_y);
+    if (first_occ_z == -1){
+        return -1;
+    }
+
+    return first_occ_z;
+
+}
+
+bool groundRule(bool matches[6]){
+    return
+    ( matches[2] && matches[3] && matches[4] && matches[5] ) ||
+    ( !matches[2] && matches[3] && matches[4] && matches[5] ) ||
+    ( matches[2] && !matches[3] && matches[4] && matches[5] ) ||
+    ( matches[2] && matches[3] && !matches[4] && matches[5] ) ||
+    ( matches[2] && matches[3] && matches[4] && !matches[5] );
+}
+
+bool recoverVoxel(ivec4 currentVoxelId){
+    ivec3 up = ivec3(0, 1, 0);
+    ivec3 down = ivec3(0, -1 ,0);
+    ivec3 side1 = ivec3(1, 0, 0);
+    ivec3 side2 = ivec3(-1, 0, 0);
+    ivec3 side3 = ivec3(0, 0, 1);
+    ivec3 side4 = ivec3(0, 0, -1);
+    ivec3 sides[] = {up, down, side1, side2, side3, side4};
+    bool matches[6];
+    ivec3 this_voxel_id = ivec3(currentVoxelId);
+
+    for (int i = 0; i < 6; i++){
+        int found = findVoxelId(this_voxel_id + sides[i]);
+        if (found != -1){
+            int voxel_stat_id = voxel_index[found][3];
+            float render_status = voxel_stat[voxel_stat_id][3];
+            float stage_status = voxel_stat[voxel_stat_id][2];
+
+            if (render_status > 0.5 || stage_status > 0.1){ // voxel next to this: either rendered, or ready to stage
+                matches[i] = true;
+            }else{
+                matches[i] = false;
+            }
+        }else{
+            matches[i] = false;
+        }
+    }
+
+    if(groundRule(matches)){
+        return true;
+    }
+
+
+    return false;
+}
+
+
 void main() {
 
     uvec2 id = gl_GlobalInvocationID.xy;
@@ -75,14 +187,9 @@ void main() {
         return;
     }
 
-    /*float p = voxel_stat[idx][0];
-    if (p < 0.5){
-        p = 2.0;
-    }else{
-        p *= 2.0;
-    }
-    voxel_stat[idx][0] = p;
-    return;*/
+    ivec4 voxelId = voxel_index[idx];
+    idx = voxel_index[idx][3];
+
 
 
     float is_staged = voxel_stat[idx][3];
@@ -91,13 +198,11 @@ void main() {
         return;
     }
 
-    if (is_staged < -0.5){ // voxel had high probability of being moving
-        return;
-    }
-
     int point_count = voxel_data[idx][0];
-    int prev_count = int(voxel_stat[idx][1]);
-
+    //int prev_count = int(voxel_stat[idx][1]);
+    float max_prob_prev_points = voxel_stat[idx][1];
+    float max_prob = max_prob_prev_points - float(int(max_prob_prev_points));
+    int prev_count = int(max_prob_prev_points);
 
 
     // if a voxel has ready to stage status, but was not staged because there was not enough place the prev iteration, stage it
@@ -107,6 +212,10 @@ void main() {
     if (counter_buffer[0][4] == 1){ // if full stage request, mark all voxels ready to stage
         if (stage_status > 0.1) {
             voxel_stat[idx][2] = 0.8;
+        }else{
+            if (recoverVoxel(voxelId) && counter_buffer[0][5] != 1){
+                voxel_stat[idx][2] = 0.8;
+            }
         }
     }
 
@@ -118,10 +227,14 @@ void main() {
     }
 
 
+
+
+
+
+
+
     // from here, these are voxels that:
     // are not ready to stage: either still accumulating points, or are not (yet) statc: stage status is 0.0 or 0.2
-
-
     float old_prob = voxel_stat[idx][0];
 
     float new_prob = 0.0;
@@ -130,26 +243,27 @@ void main() {
     }else{
         new_prob = BayesFilter(old_prob, alpha, beta);
     }
+    if (new_prob > max_prob){
+        max_prob = new_prob;
+    }
     voxel_stat[idx][0] = new_prob;
-    voxel_stat[idx][1] = float(point_count);
+
+
+    voxel_stat[idx][1] = float(point_count) + max_prob;
 
     // staging status here is either: 0.0 or 0.2
     // probability is either > 0.9 or below
-    if (new_prob > 0.95 || stage_status > 0.1){ // pass for voxels that has just reached 0.9 static probability, or will be rendered
+    if (new_prob > 0.9 || stage_status > 0.1 || counter_buffer[0][5] == 1){ // pass for voxels that has just reached 0.9 static probability, or will be rendered, OR not filtering for outliers
         if (stage_status < 0.1){ // this voxel will be rendered, set if newly 0.9 and not yet marked as to be rendered
             voxel_stat[idx][2] = 0.2;
         }
 
 
 
-        // ready to stage when: max points is reached or no longer seeing it
-        if (new_prob < 0.5 || point_count + 1 >= max_vox_points){
+        // ready to stage when: max points is reached (discard: or no longer seeing it > prob < 0.5)
+        if (point_count + 1 >= max_vox_points){
             voxel_stat[idx][2] = 0.8;
         }
 
-    }
-
-    if (new_prob < 0.2){
-        voxel_stat[idx][3] = -1.0;
     }
 }

@@ -10,33 +10,85 @@ class TestGpuMemoryManager(unittest.TestCase):
 
     def test_shouldAddPoints(self):
         points = np.random.rand(3, 6)  # 3 points
-        start = self.manager.addPoints(points)
+        ptr = self.manager.addPoints(points)
+        self.assertEqual(ptr, 124)
+        start, end = self.manager.pointers[ptr]
         self.assertEqual(start, 0)
-        actual = self.manager.points[start:start+3]
+        self.assertEqual(end, 3)
+
+        actual = self.manager.points[start:end]
         self.assertTrue(np.allclose(actual, points, atol=self.tolerance))
 
     def test_shouldAddPointclouds(self):
         p1 = np.random.rand(2, 6)
         p2 = np.random.rand(3, 6)
 
-        start1 = self.manager.addPoints(p1)
-        start2 = self.manager.addPoints(p2)
+        ptr1 = self.manager.addPoints(p1)
+        ptr2 = self.manager.addPoints(p2)
 
-        self.assertEqual(start1, 0)
-        self.assertEqual(start2, 2)
+        loc1 = self.manager.pointers[ptr1]
+        self.assertEqual(loc1, (0, 2))
+
+        loc1 = self.manager.pointers[ptr2]
+        self.assertEqual(loc1, (2, 5))
+
 
     def test_shouldFreePoints(self):
         p1 = np.random.rand(2, 6)
         p2 = np.random.rand(3, 6)
 
-        start1 = self.manager.addPoints(p1)
-        start2 = self.manager.addPoints(p2)
+        ptr1 = self.manager.addPoints(p1)
+        ptr2 = self.manager.addPoints(p2)
 
-        self.manager.freeSpace(start1)
+        old_ptr2_place = self.manager.pointers[ptr2] # inclusive, exclusive
+        self.assertEqual(old_ptr2_place, (2, 5))
+
+        self.manager.freeSpace(ptr1)
+
+        new_ptr2_place = self.manager.pointers[ptr2]
+        self.assertEqual(new_ptr2_place, (0, 3))
+
         p3 = np.random.rand(2, 6)
-        start3 = self.manager.addPoints(p3)
+        ptr3 = self.manager.addPoints(p3)
 
-        self.assertEqual(start3, 0)
+        new_ptr3_place = self.manager.pointers[ptr3]
+        self.assertEqual(new_ptr3_place, (3, 5))
+
+
+    def test_shouldHandleGapFree(self):
+        p1 = np.random.rand(2, 6)
+        p2 = np.random.rand(3, 6)
+        p3 = np.random.rand(2, 6)
+
+        pt1 = self.manager.addPoints(p1)
+        pt2 = self.manager.addPoints(p2)
+        pt3 = self.manager.addPoints(p3)
+
+
+        self.manager.freeSpace(pt2)
+
+        loc1 = self.manager.pointers[pt1]
+        self.assertEqual(loc1, (0,2))
+
+        loc3 = self.manager.pointers[pt3]
+        self.assertEqual(loc3, (2, 4))
+
+    def test_shouldFreeEnd(self):
+        p1 = np.random.rand(2, 6)
+        p2 = np.random.rand(3, 6)
+
+        pt1 = self.manager.addPoints(p1)
+        pt2 = self.manager.addPoints(p2)
+
+        self.manager.freeSpace(pt2)
+
+        self.assertEqual(len(self.manager.allocationIndexes), 1)
+        self.assertEqual(len(self.manager.pointers), 1)
+
+        with self.assertRaises(ValueError):
+            self.manager.freeSpace(pt2)
+
+        self.assertFalse(self.manager.freeSpace(pt1))
 
     def test_shouldRaiseOutOfMemory(self):
         p1 = np.random.rand(20, 6)
@@ -50,92 +102,66 @@ class TestGpuMemoryManager(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.manager.freeSpace(5)  # No such allocation exists
 
+    def test_canTrackRanges(self):
+        p1 = np.random.rand(10, 6)
+        self.assertEqual(self.manager.getMaxPointIndex(), 0)
+
+        ptr1 = self.manager.addPoints(p1)
+        self.assertEqual(self.manager.getMaxPointIndex(), 10)
+
+        self.manager.freeSpace(ptr1)
+        self.assertEqual(self.manager.getMaxPointIndex(), 0)
+
+        ptr1 = self.manager.addPoints(p1)
+        self.assertEqual(self.manager.getMaxPointIndex(), 10)
+        self.manager.markLastBufferPoint()
+        self.assertEqual(self.manager.last_buffered_point, 10)
+
+        ptr2 = self.manager.addPoints(p1)
+        self.assertEqual(self.manager.getMaxPointIndex(), 20)
+        self.manager.markLastBufferPoint()
+        self.assertEqual(self.manager.last_buffered_point, 20)
+
+        self.manager.freeSpace(ptr1)
+        self.assertEqual(self.manager.getMaxPointIndex(), 10)
+        self.assertEqual(self.manager.last_buffered_point, 0)
+
+
     def test_shouldWriteToFreeBlocks(self):
         p1 = np.random.rand(2, 6)
         p2 = np.random.rand(3, 6)
         p3 = np.random.rand(2, 6)
 
-        start1 = self.manager.addPoints(p1)  # (0,2)
-        start2 = self.manager.addPoints(p2)  # (2,5)
-        start3 = self.manager.addPoints(p3)  # (5,7)
+        pt1 = self.manager.addPoints(p1)  # (0,2)
+        pt2 = self.manager.addPoints(p2)  # (2,5)
+        pt3 = self.manager.addPoints(p3)  # (5,7)
 
-        self.manager.freeSpace(start1)  # Free first block
-        self.manager.freeSpace(start2)  # Free second block
+        self.manager.freeSpace(pt1)  # Free first block
+        self.manager.freeSpace(pt2)  # Free second block
 
         # Insert new block of size 5
         p4 = np.random.rand(5, 6)
         start4 = self.manager.addPoints(p4)
 
-        self.assertEqual(start4, 0)  # Should use merged space from (0,5)
+        loc_first = self.manager.pointers[pt3]
+        self.assertEqual(loc_first, (0, 2))
+
+        loc_last = self.manager.pointers[start4]
+        self.assertEqual(loc_last, (2, 7))  # Should use merged space from (0,5)
 
     def test_shouldntDefragment(self):
         self.manager.addPoints(np.zeros((5, 6)))
-        self.manager.addPoints(np.zeros((1, 6))) # gap
+        self.manager.addPoints(np.zeros((1, 6))) #
         self.manager.addPoints(np.zeros((3, 6)))
 
-        self.assertEqual(self.manager.allocationIndexes, [(0, 5), (5, 6), (6, 9)])
+        self.assertEqual(self.manager.allocationIndexes, [(0, 5, 124), (5, 6, 125), (6, 9, 126)])
 
-        result = self.manager.defragmentStep()
+        result = self.manager.fullDefragment()
 
-        self.assertEqual(self.manager.allocationIndexes, [(0, 5), (5, 6), (6, 9)])
+        self.assertEqual(self.manager.allocationIndexes, [(0, 5, 124), (5, 6, 125), (6, 9, 126)])
         self.assertEqual(result, False)
 
-    def test_shouldDefragmentSingleGap(self):
-        points1 = np.zeros((5, 6))
-        points2 = np.zeros((1, 6))
-        points3 = np.zeros((4, 6))
-        self.manager.addPoints(points1)
-        self.manager.addPoints(points2) #gap
-        self.manager.addPoints(points3)
 
-        self.assertEqual(self.manager.allocationIndexes, [(0, 5), (5, 6), (6, 10)])
-
-        self.manager.freeSpace(5)
-        result = self.manager.defragmentStep()
-        self.assertEqual(result, True)
-
-        self.assertEqual(self.manager.allocationIndexes, [(0, 5), (5, 9)])
-
-        missingLength = self.manager.maxNumPoints - (len(points1) + len(points3))
-
-        concatedPoints = np.concatenate((points1, points3, np.zeros((missingLength, 6))), axis=0)
-        self.assertTrue(np.allclose(self.manager.points, concatedPoints, atol=self.tolerance))
-
-    def test_defragmentStep_multiple_gaps(self):
-        points1 = np.zeros((5, 6))
-        points2 = np.zeros((1, 6))
-        points3 = np.zeros((3, 6))
-        points4 = np.zeros((1, 6))
-        points5 = np.zeros((3, 6))
-
-        self.manager.addPoints(points1)  # (0, 5)
-        self.manager.addPoints(points2)  # (5, 6)
-        self.manager.addPoints(points3)  # (6, 9)
-        self.manager.addPoints(points4)  # (9, 10)
-        self.manager.addPoints(points5)  # (10, 13)
-
-        self.assertEqual(self.manager.allocationIndexes, [(0, 5), (5, 6), (6, 9), (9, 10), (10, 13)])
-
-        self.manager.freeSpace(5)
-        self.assertEqual(self.manager.allocationIndexes, [(0, 5), (6, 9), (9, 10), (10, 13)])
-
-        self.manager.freeSpace(9)
-        self.assertEqual(self.manager.allocationIndexes, [(0, 5), (6, 9), (10, 13)])
-
-
-        self.manager.defragmentStep()
-
-        self.assertEqual(self.manager.allocationIndexes, [(0, 5), (5, 8), (10, 13)])
-
-
-        self.manager.defragmentStep()
-
-        self.assertEqual(self.manager.allocationIndexes, [(0, 5), (5, 8), (8, 11)])
-
-        missingLength = self.manager.maxNumPoints - (len(points1) + len(points3) + len(points5))
-        concatedPoints = np.concatenate((points1, points3, points5, np.zeros((missingLength, 6))), axis=0)
-
-        self.assertTrue(np.allclose(self.manager.points, concatedPoints, atol=self.tolerance))
 
 if __name__ == '__main__':
     unittest.main()
