@@ -38,8 +38,8 @@ class Voxelizer:
 
         self.voxman = VoxelManager(self, renderer)
 
-        self.separate_colors = False
-        self.filter_outliers = False
+        self.separate_colors = None
+        self.filter_outliers = None
 
         self.last_run_realloc = None
 
@@ -51,14 +51,11 @@ class Voxelizer:
 
         self.last_added_point = 0
         self.stored_voxels = 0
-
         self.realloc_needed = True
         self.prev_stored_voxels = -1
-        self.initVoxels()
-        self.last_run_realloc = False
 
-        self.separate_colors = False
-        self.filter_outliers = False
+        self.initVoxels()
+        self.last_run_realloc = None
 
         self.voxel_size = np.array([voxel_size]).astype(np.float32)
 
@@ -77,7 +74,9 @@ class Voxelizer:
         self.voxel_index = None
         self.voxel_data = None
         self.voxel_stats = None
+
         self.added_points = None
+        self.added_colors = None
 
     def addPoints(self, np_points, colors, printt=False):
         self.handleAddingPoints(np_points.astype(np.float32), colors)
@@ -86,6 +85,8 @@ class Voxelizer:
         # currently its working because im reading the whole thing back to memory
         # but when im reallocating on the cpu, i have to reallocate with actual data
         current_stored_begin_index = self.last_added_point - len(np_points) # points exactly to the first point in the current cloud
+
+        # print(current_stored_begin_index)
 
         start = time.time()
         gpu = True
@@ -112,7 +113,7 @@ class Voxelizer:
             )
 
 
-        self.voxel_stats, voxels_to_render = self.compute.prepareDispatchVoxelStager(self.stored_voxels, self.max_points, self.voxel_stats, filter_outliers=self.filter_outliers, stage_everything=False)
+        self.voxel_stats, voxels_to_render = self.compute.prepareDispatchVoxelStager(self.voxel_index, self.stored_voxels, self.max_points, self.voxel_stats, filter_outliers=self.filter_outliers, stage_everything=False)
 
         if printt:
             print("gpu > unknown points: " + str(unknown_points[0]) + " " + str(time.time()-start))
@@ -136,7 +137,7 @@ class Voxelizer:
 
     def stageAllRemaningVoxels(self, ui=None):
         while True:
-            self.voxel_stats, voxels_to_render = self.compute.prepareDispatchVoxelStager(self.stored_voxels, self.max_points, self.voxel_stats, filter_outliers=self.filter_outliers, stage_everything=True)
+            self.voxel_stats, voxels_to_render = self.compute.prepareDispatchVoxelStager(self.voxel_index, self.stored_voxels, self.max_points, self.voxel_stats, filter_outliers=self.filter_outliers, stage_everything=True)
             if self.renderer is not None:
                 for v_slice in voxels_to_render:
                     points, colors = self.getStoredPointsFromVoxelDataSlice(v_slice)
@@ -295,7 +296,7 @@ class Voxelizer:
 
         unknown_points = np.zeros(unknown_len).astype(np.int32)
 
-        t_voxel_index = voxel_index
+        t_voxel_index = voxel_index.copy()
         t_voxel_data = voxel_data
 
         lens_data = np.array([len(np_points), stored_voxel_num, begin_index, 0]).astype(np.uint32)
@@ -579,7 +580,12 @@ class Voxelizer:
     def getStoredPointsFromVoxelDataSlice(self, slice):
         stored = slice[0]
         point_inds = slice[1: min(stored + 1, self.max_points)]
-        return self.added_points[point_inds][:, :3], self.added_colors[point_inds]
+        try:
+            return self.added_points[point_inds][:, :3], self.added_colors[point_inds]
+        except IndexError as e:
+
+            print("ERROR: len: " + str(len(point_inds)))
+            # return self.added_points[:10][:, :3], self.added_colors[:10]
 
     def getStoredVoxelCount(self):
         return self.stored_voxels

@@ -7,8 +7,6 @@ from dash.exceptions import InvalidIndexException
 
 from GpuMemoryManager import GpuMemoryManager
 from InputListener import InputListener
-from ShaderPrograms import TEST_VERTEX_SHADER, TEST_FRAGMENT_SHADER, TEST_GEOMETRY_SHADER, DEFAULT_VERTEX_SHADER, \
-    DEFAULT_FRAGMENT_SHADER, CUBE_GEOMETRY_SHADER, CUBE_FRAGMENT_SHADER
 from pyglm import glm
 
 import time
@@ -128,10 +126,25 @@ class Renderer:
             print("Error creating glfw context")
             return
 
-        self.window = glfw.create_window(self.width, self.height, "opengl", None, None)
+        glfw.window_hint(glfw.RESIZABLE, glfw.FALSE)
+
+        self.window = glfw.create_window(self.width, self.height, "Pointcloud Renderer", None, None)
         if not self.window:
             print("Error creating window")
             glfw.terminate()
+
+        monitor = glfw.get_primary_monitor()
+        video_mode = glfw.get_video_mode(monitor)
+        screen_width = video_mode.size.width
+        screen_height = video_mode.size.height
+
+        # Calculate position to place the window on the right side (and center it vertically)
+        xpos = screen_width - self.width - 10
+        ypos = 50
+
+        # Set the window position
+        glfw.set_window_pos(self.window, xpos, ypos)
+
 
         glfw.make_context_current(self.window)
 

@@ -38,14 +38,14 @@ float BayesFilter(float prob_prev, float alpha, float beta) {
     return (alpha * prob_prev) / (alpha * prob_prev + beta * (1.0 - prob_prev));
 }
 
-bool tryStageVoxel(int idx, int point_count, int max_stage){
+bool tryStageVoxel(int idx, int point_count, int max_vox_points, int max_stage){
     int current = atomicAdd(counter_buffer[0][0], 1); // t1: gets 0, t2: gets 1 > at this point, counter is 2
     if (current < max_stage){ // t1: 0 < 1 >> stage
 
         // voxel_stage_data[current][0] = 6969;
         voxel_stage_data[current][0] = point_count;
 
-        for (int i = 1; i < point_count; i++){
+        for (int i = 1; i < min(point_count + 1, max_vox_points); i++){
             voxel_stage_data[current][i] = voxel_data[idx][i];
         }
 
@@ -219,8 +219,22 @@ void main() {
         }
     }
 
+    /*voxel_stage_data[10 + idx][0] = idx + 1;
+    if (idx == 1){
+        voxel_stage_data[5][0] = 69;
+        int a = 0;
+        for (int i = 0; i < 1000000; i++){
+            if (a % 123 == 0){
+                a = i;
+            }
+            a += 1;
+            voxel_stage_data[5][1] = a;
+            voxel_stage_data[6][idx] = idx;
+        }
+    }*/
+
     if (stage_status > 0.5){ // (0.8 for ready to stage, 0.2 will be staged
-        if(tryStageVoxel(idx, min(point_count, max_vox_points), max_staging)){
+        if(tryStageVoxel(idx, point_count, max_vox_points, max_staging)){
             voxel_stat[idx][3] = 1.0; // voxel was succesfully staged
         }
         return;

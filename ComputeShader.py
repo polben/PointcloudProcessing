@@ -785,15 +785,21 @@ class ComputeShader:
 
         return corr_indexes, dists
 
-    def prepareDispatchVoxelStager(self, stored_voxel_num, max_points, voxel_statistics, filter_outliers, stage_everything=False):
+    def prepareDispatchVoxelStager(self, voxel_index, stored_voxel_num, max_points, voxel_statistics, filter_outliers, stage_everything=False, max_staging=1024, debug=False):
         self.setActiveProgram(self.voxel_stage)
 
-        max_staging_area = 1024
+        max_staging_area = max_staging
         if self.voxel_stage_out is None: # allocate voxel_stage once
+            # print("stage realloc")
             self.voxel_stage_out = np.empty((max_staging_area, max_points)).astype(np.int32)
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_stage)
             glBufferData(GL_SHADER_STORAGE_BUFFER, self.voxel_stage_out.nbytes, None, GL_DYNAMIC_DRAW) # None data ptr
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        """glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_index)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, voxel_index.nbytes, voxel_index, GL_DYNAMIC_DRAW)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+        """
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_stat)
         glBufferData(GL_SHADER_STORAGE_BUFFER, voxel_statistics.nbytes, voxel_statistics, GL_DYNAMIC_DRAW)
@@ -803,6 +809,7 @@ class ComputeShader:
         single_counter_buffer[0][3] = stored_voxel_num
         single_counter_buffer[0][2] = max_points
         single_counter_buffer[0][1] = max_staging_area
+        single_counter_buffer[0][0] = 0
 
         if stage_everything:
             single_counter_buffer[0][4] = 1
@@ -815,6 +822,8 @@ class ComputeShader:
         glBufferData(GL_SHADER_STORAGE_BUFFER, single_counter_buffer.nbytes, single_counter_buffer, GL_DYNAMIC_DRAW)  # None data ptr
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
+        # for testing
+        # single_counter_buffer = np.zeros_like(single_counter_buffer).astype(np.int32)
 
 
         self.dispatchCurrentProgramWait(stored_voxel_num)
@@ -829,10 +838,10 @@ class ComputeShader:
                            voxel_statistics.ctypes.data_as(c_void_p))
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
-        probs = voxel_statistics[voxel_statistics[:, 0] > 0.9]
+        """probs = voxel_statistics[voxel_statistics[:, 0] > 0.9]
         if len(probs) > 0:
-            a = 0
-
+            a = 0"""
+        # print(single_counter_buffer[0][0])
         if single_counter_buffer[0][0] > 0:
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_stage)
             new_data_len = single_counter_buffer[0][0] * max_points * 4
@@ -842,10 +851,25 @@ class ComputeShader:
                                self.voxel_stage_out.ctypes.data_as(c_void_p)) # buffering into a bigger than needed np array!!!
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
-            return voxel_statistics, self.voxel_stage_out[:single_counter_buffer[0][0]]
+            if debug:
+                return voxel_statistics, self.voxel_stage_out, single_counter_buffer
+            else:
+                return voxel_statistics, self.voxel_stage_out[:single_counter_buffer[0][0]]
 
-        return voxel_statistics, []
+        if debug:
+            return voxel_statistics, self.voxel_stage_out, single_counter_buffer
+        else:
+            return voxel_statistics, []
 
+    def bufferVoxelIndex(self, voxel_index):
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_index)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, voxel_index.nbytes, voxel_index, GL_DYNAMIC_DRAW)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+    def fullBufferVoxelData(self, voxel_data):
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_data)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, voxel_data.nbytes, voxel_data, GL_DYNAMIC_DRAW)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
     def prepareDispatchVoxelizer(self, np_points, voxel_index, voxel_data, voxel_size, stored_voxel_num, begin_index, max_points_to_store, realloc_needed, prev_stored_voxels, debug=False):
         self.setActiveProgram(self.voxel_shader)
@@ -857,15 +881,11 @@ class ComputeShader:
 
         unknown_points = np.zeros(unknown_len).astype(np.int32)
 
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_index)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, voxel_index.nbytes, voxel_index, GL_DYNAMIC_DRAW)
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+        self.bufferVoxelIndex(voxel_index)
 
         if realloc_needed:
             # print("realloced voxdat")
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_data)
-            glBufferData(GL_SHADER_STORAGE_BUFFER, voxel_data.nbytes, voxel_data, GL_DYNAMIC_DRAW)
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+            self.fullBufferVoxelData(voxel_data)
         else:
             # print("subbuffered voxdat")
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_voxel_data)

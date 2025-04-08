@@ -14,21 +14,31 @@ from Voxelizer import Voxelizer
 class VoxelizerTest(unittest.TestCase):
 
     def setUp(self):
-        path = "F://uni//3d-pointcloud//2011_09_26_drive_0005_sync"
+        path = "F:/uni/3d-pointcloud/2011_09_26_drive_0005_sync/2011_09_26/2011_09_26_drive_0005_sync"
         calibration = "F://uni//3d-pointcloud//2011_09_26_calib//2011_09_26"
 
-        self.oxtsDataReader = OxtsDataReader(path)
-        self.lidarDataReader = LidarDataReader(path=path, oxtsDataReader=self.oxtsDataReader, calibration=calibration,
-                                               targetCamera="02", max_read=10)
+        self.oxtsDataReader = OxtsDataReader()
+        self.lidarDataReader = LidarDataReader()
 
-        self.pointcloudAlignment = PointcloudAlignment(self.lidarDataReader, self.oxtsDataReader)
+        self.pointcloudAlignment = PointcloudAlignment()
 
         self.computeShader = ComputeShader()
         self.icpContainer = PointcloudIcpContainer(self.computeShader, self.pointcloudAlignment)
 
         self.tolerance = 1e-5  # 0.00001
 
+        self.lidarDataReader.init(path, calibration, "02", 20, None)
+        self.oxtsDataReader.init(path)
+        self.pointcloudAlignment.init(self.lidarDataReader, self.oxtsDataReader)
 
+        self.STAT_PROB = 0
+        self.STAT_MAX_PROB_PREV_POINTS = 1
+        self.STAT_STAGE_STATUS = 2
+        self.STAT_IS_STAGED = 3
+
+        self.STAGE_STATUS_WILL_BE_STAGED = 0.2
+        self.STAGE_STATUS_READY_TO_STAGE = 0.8
+        self.STAGE_STATUS_NONE = 0.0
 
     def tearDown(self):
         self.computeShader.cleanup()
@@ -182,32 +192,80 @@ class VoxelizerTest(unittest.TestCase):
     def test_sameUnknownPoints(self):
         pts, poses, rots = self.getAlignedLidarPoints(10)
         pc = pts[0]
+        pc2 = pts[1]
 
-        v = Voxelizer(self.computeShader, voxel_size=0.5)
+        v = Voxelizer(self.computeShader, None)
+        v.init(0.5)
 
         v.handleAddingPoints(pc)
 
         current_stored_begin_index = v.last_added_point - len(pc)
 
-        unknowns_g, vox_ind_g, vox_dat_g, debug_data = v.compute.prepareDispatchVoxelizer(
-            pc, v.voxel_index, v.voxel_data, v.voxel_size, v.stored_voxels, current_stored_begin_index, v.max_points,
-            debug=True
-        )
+        unknowns_g, _ = v.compute.prepareDispatchVoxelizer(
+                np_points=pc,
+                voxel_index=v.voxel_index,
+                voxel_data=v.voxel_data,
+                voxel_size=v.voxel_size,
+                stored_voxel_num=v.stored_voxels,
+                begin_index=current_stored_begin_index,
+                max_points_to_store=v.max_points,
+                realloc_needed=v.realloc_needed,
+                prev_stored_voxels=v.prev_stored_voxels,
+                debug=False)
 
         unknowns_c, vox_ind_c, vox_dat_c, vox_ind_coords_c, vox_ind_ids_c = v.cpuGpuDebug_dispatchVoxels(
-            pc, v.voxel_index, v.voxel_data, v.voxel_size, v.stored_voxels, current_stored_begin_index
+                np_points=pc,
+                voxel_index=v.voxel_index,
+                voxel_data=v.voxel_data,
+                voxel_size=v.voxel_size,
+                stored_voxel_num=v.stored_voxels,
+                begin_index=current_stored_begin_index,
+            )
+
+
+        unique_unknowns_c, counts_c = np.unique(unknowns_c, return_counts=True)
+        unique_unknowns_g, counts_g = np.unique(unknowns_g, return_counts=True)
+
+
+        self.assertTrue(np.array_equal(unique_unknowns_c, unique_unknowns_g))
+        print("pass 1")
+
+        v.realloc_needed, v.prev_stored_voxels = v.storeUnknownPoints(unknowns_g)
+        v.last_run_realloc = v.realloc_needed
+
+        unknowns_g, _ = v.compute.prepareDispatchVoxelizer(
+            np_points=pc2,
+            voxel_index=v.voxel_index,
+            voxel_data=v.voxel_data,
+            voxel_size=v.voxel_size,
+            stored_voxel_num=v.stored_voxels,
+            begin_index=current_stored_begin_index,
+            max_points_to_store=v.max_points,
+            realloc_needed=v.realloc_needed,
+            prev_stored_voxels=v.prev_stored_voxels,
+            debug=False)
+
+        unknowns_c, vox_ind_c, vox_dat_c, vox_ind_coords_c, vox_ind_ids_c = v.cpuGpuDebug_dispatchVoxels(
+            np_points=pc2,
+            voxel_index=v.voxel_index,
+            voxel_data=v.voxel_data,
+            voxel_size=v.voxel_size,
+            stored_voxel_num=v.stored_voxels,
+            begin_index=current_stored_begin_index,
         )
 
         unique_unknowns_c, counts_c = np.unique(unknowns_c, return_counts=True)
         unique_unknowns_g, counts_g = np.unique(unknowns_g, return_counts=True)
 
         self.assertTrue(np.array_equal(unique_unknowns_c, unique_unknowns_g))
-
+        print("pass 2")
 
     def test_gpuCanVoxelize(self):
         pts, poses, rots = self.getAlignedLidarPoints(10)
 
-        v = Voxelizer(self.computeShader, voxel_size=0.5)
+        v = Voxelizer(self.computeShader, None)
+        # v.max_points = 4096 set with shader!
+        v.init(0.5)
 
 
         for i in range(5):
@@ -220,15 +278,27 @@ class VoxelizerTest(unittest.TestCase):
             current_stored_begin_index = v.last_added_point - len(pc)
 
 
-            original_voxel_inds = np.zeros_like(v.voxel_index)
-            original_voxel_inds = np.copy(v.voxel_index)
+            original_voxel_inds = v.voxel_index.copy()
 
-            unknowns_g, vox_ind_g, vox_dat_g, debug_data = v.compute.prepareDispatchVoxelizer(
-                pc, v.voxel_index, v.voxel_data, v.voxel_size, v.stored_voxels, current_stored_begin_index, v.max_points, debug=True
-            )
+            unknowns_g, debug_data = v.compute.prepareDispatchVoxelizer(
+                np_points=pc,
+                voxel_index=v.voxel_index,
+                voxel_data=v.voxel_data,
+                voxel_size=v.voxel_size,
+                stored_voxel_num=v.stored_voxels,
+                begin_index=current_stored_begin_index,
+                max_points_to_store=v.max_points,
+                realloc_needed=v.realloc_needed,
+                prev_stored_voxels=v.prev_stored_voxels,
+                debug=True)
 
             unknowns_c, vox_ind_c, vox_dat_c, vox_ind_coords_c, vox_ind_ids_c = v.cpuGpuDebug_dispatchVoxels(
-                pc, v.voxel_index, v.voxel_data, v.voxel_size, v.stored_voxels, current_stored_begin_index
+                np_points=pc,
+                voxel_index=v.voxel_index,
+                voxel_data=v.voxel_data,
+                voxel_size=v.voxel_size,
+                stored_voxel_num=v.stored_voxels,
+                begin_index=current_stored_begin_index,
             )
 
 
@@ -247,7 +317,8 @@ class VoxelizerTest(unittest.TestCase):
 
             self.assertTrue(np.array_equal(uniq_ids_c, uniq_ids_g)) # same voxel data indexes
 
-
+            vox_dat_g = v.voxel_data.copy()
+            v.compute.getFullVoxelData(v.stored_voxels, v.max_points, vox_dat_g)
 
             voxel_data_counts_c = vox_dat_c[:, 0]
             voxel_data_counts_g = vox_dat_g[:, 0]
@@ -262,44 +333,468 @@ class VoxelizerTest(unittest.TestCase):
                     self.assertTrue(np.array_equal(unique_point_indicies_c, unique_point_indicies_g))
 
 
-            self.assertTrue(np.array_equal(vox_ind_c, vox_ind_g)) # voxel indicies are equal and unchanged after gpu/cpu computation
-            self.assertTrue(np.array_equal(original_voxel_inds, vox_ind_g)) # voxel indicies are equal and unchanged after gpu/cpu computation
+            self.assertTrue(np.array_equal(original_voxel_inds, v.voxel_index)) # voxel indicies are equal and unchanged after gpu/cpu computation
             self.assertTrue(np.array_equal(original_voxel_inds, vox_ind_c)) # voxel indicies are equal and unchanged after gpu/cpu computation
 
 
-            unique_unknowns_c, counts_c = np.unique(unknowns_c, return_counts=True)
-            unique_unknowns_g, counts_g = np.unique(unknowns_g, return_counts=True)
 
-            self.assertTrue(np.array_equal(unique_unknowns_c, unique_unknowns_g)) # same unfound points (in the voxels)
-            self.assertTrue(np.array_equal(counts_c, counts_g))
-
-
-            v.voxel_index = vox_ind_c
-            v.voxel_data = vox_dat_c
-
-            unknown_points = unknowns_c
-
-            v.storeUnknownPoints(unknown_points, current_stored_begin_index)
+            v.realloc_needed, v.prev_stored_voxels = v.storeUnknownPoints(unknowns_g)
+            v.last_run_realloc = v.realloc_needed
 
             print("passed")
 
 
-    def test_canGetVoxelDensities(self):
-        pts, poses, rots = self.getAlignedLidarPoints(10)
+    def test_basicDataIntegrity(self):
 
-        v = Voxelizer(self.computeShader, voxel_size=0.5)
-
-        for i in range(5):
-            pc = pts[i]
-            v.addPoints(pc, True)
-
-            dens = v.getVoxelDensities()
-            print(np.min(dens), np.max(dens), np.mean(dens), np.median(dens))
-            print(np.argmin(dens), np.argmax(dens))
-            print(dens)
-            print("------------\n")
+        v = Voxelizer(self.computeShader, None)
+        v.init(0.5)
 
 
+        for i in range(100):
+            voxel_index = np.array([[0, 0, 0, 0], [0,2,0,1]]).astype(np.int32)
+            voxel_data = np.zeros((2, v.max_points)).astype(np.int32)
+            voxel_stat = np.zeros((2, 4)).astype(np.float32)
+
+            voxel_stat[0][3] = 1.0 # both voxels are "already staged"
+            voxel_stat[1][3] = 1.0
+
+            # 1 point with point index 1
+            voxel_data[0][0] = 1
+            voxel_data[0][1] = 1
+
+            # 2 points with index 2,3
+            voxel_data[1][0] = 2
+            voxel_data[1][1] = 2
+            voxel_data[1][2] = 3
+
+            v.compute.bufferVoxelIndex(voxel_index)
+            v.compute.fullBufferVoxelData(voxel_data)
+
+            stored_voxel_num = len(voxel_index)
+
+            filter_outliers = True
+            stage_everything = True
+            max_staging_area = 512
+
+            new_voxel_stats, staged_voxels, counter_buffer = v.compute.prepareDispatchVoxelStager(
+                voxel_index=None,
+                stored_voxel_num=stored_voxel_num,
+                max_points=v.max_points,
+                voxel_statistics=voxel_stat,
+                filter_outliers=filter_outliers,
+                stage_everything=stage_everything,
+                max_staging=max_staging_area,
+                debug=True
+            )
+
+            self.assertTrue(counter_buffer[0][0] == 0)
+            self.assertTrue(counter_buffer[0][1] == max_staging_area)
+            self.assertTrue(counter_buffer[0][2] == v.max_points)
+            self.assertTrue(counter_buffer[0][3] == stored_voxel_num)
+
+            if filter_outliers:
+                self.assertTrue(counter_buffer[0][5] == 0)
+            else:
+                self.assertTrue(counter_buffer[0][5] == 1)
+
+            if stage_everything:
+                self.assertTrue(counter_buffer[0][4] == 1)
+            else:
+                self.assertTrue(counter_buffer[0][4] == 0)
+
+            try: # allocating with numpy empty results in random data sometimes, but that should not be a problem
+                self.assertTrue(np.array_equal(staged_voxels, np.zeros((max_staging_area, v.max_points)).astype(np.int32)))
+            except AssertionError as e:
+                a = 0
+
+
+    def test_shouldUpdateStagingStatus(self):
+        v = Voxelizer(self.computeShader, None)
+        v.init(0.5)
+
+        voxel_index = np.array([[0, 0, 0, 0], [0, 2, 0, 1]]).astype(np.int32)
+        voxel_data = np.zeros((2, v.max_points)).astype(np.int32)
+        voxel_stat = np.zeros((2, 4)).astype(np.float32)
+
+        voxel_stat[0][3] = 0.0  # none of the voxels are "already staged"
+        voxel_stat[1][3] = 0.0
+
+        voxel_stat[0][0] = 1.0 # setting probs > 0.9
+        voxel_stat[1][0] = 0.91
+
+        # 1 point with point index 1
+        voxel_data[0][0] = 1
+        voxel_data[0][1] = 1
+
+        # 2 points with index 2,3
+        voxel_data[1][0] = 2
+        voxel_data[1][1] = 2
+        voxel_data[1][2] = 3
+
+        v.compute.bufferVoxelIndex(voxel_index)
+        v.compute.fullBufferVoxelData(voxel_data)
+
+        stored_voxel_num = len(voxel_index)
+
+        filter_outliers = False
+        stage_everything = False
+        max_staging_area = 512
+
+        new_voxel_stats, staged_voxels, counter_buffer = v.compute.prepareDispatchVoxelStager(
+            voxel_index=None,
+            stored_voxel_num=stored_voxel_num,
+            max_points=v.max_points,
+            voxel_statistics=voxel_stat,
+            filter_outliers=filter_outliers,
+            stage_everything=stage_everything,
+            max_staging=max_staging_area,
+            debug=True
+        )
+
+        self.assertTrue(counter_buffer[0][0] == 0)
+        self.assertTrue(counter_buffer[0][1] == max_staging_area)
+        self.assertTrue(counter_buffer[0][2] == v.max_points)
+        self.assertTrue(counter_buffer[0][3] == stored_voxel_num)
+
+        if filter_outliers:
+            self.assertTrue(counter_buffer[0][5] == 0)
+        else:
+            self.assertTrue(counter_buffer[0][5] == 1)
+
+        if stage_everything:
+            self.assertTrue(counter_buffer[0][4] == 1)
+        else:
+            self.assertTrue(counter_buffer[0][4] == 0)
+
+        self.assertTrue(new_voxel_stats[0][2] == 0.2) # prob has increased
+        self.assertTrue(new_voxel_stats[1][2] == 0.2)
+
+        self.assertTrue(new_voxel_stats[0][1] == 2.0) # storing max prob + pc (1.0 + 1 points)
+        self.assertTrue(new_voxel_stats[1][1] >= 2.9 and new_voxel_stats[1][2] <= 3.0) # storing max prob + pc (1.0 + 1 points)
+
+    def test_probabilitiesSayWithin0and1(self):
+        v = Voxelizer(self.computeShader, None)
+        v.init(0.5)
+
+        voxel_index = np.array([[0, 0, 0, 0], [0, 2, 0, 1]]).astype(np.int32)
+        voxel_data = np.zeros((2, v.max_points)).astype(np.int32)
+        voxel_stat = np.zeros((2, 4)).astype(np.float32)
+
+        voxel_stat[0][3] = 0.0  # none of the voxels are "already staged"
+        voxel_stat[1][3] = 0.0
+
+        voxel_stat[0][0] = 0.5  # setting default probs
+        voxel_stat[1][0] = 0.5
+
+
+        voxel_stat[0][1] = 1.0
+        voxel_stat[1][1] = 2.0
+
+
+        prev_prob_1 = 0.5
+        prev_prob_2 = 0.5
+
+        # 1 point with point index 1
+        voxel_data[0][0] = 1
+        voxel_data[0][1] = 1
+
+        # 2 points with index 2,3
+        voxel_data[1][0] = 2
+        voxel_data[1][1] = 2
+        voxel_data[1][2] = 3
+
+        access_count = 2
+        for i in range(100):
+            voxel_data[0][0] = access_count
+
+            v.compute.bufferVoxelIndex(voxel_index)
+            v.compute.fullBufferVoxelData(voxel_data)
+
+            stored_voxel_num = len(voxel_index)
+
+            filter_outliers = False
+            stage_everything = False
+            max_staging_area = 512
+
+            voxel_stat, staged_voxels, counter_buffer = v.compute.prepareDispatchVoxelStager(
+                voxel_index=None,
+                stored_voxel_num=stored_voxel_num,
+                max_points=v.max_points,
+                voxel_statistics=voxel_stat,
+                filter_outliers=filter_outliers,
+                stage_everything=stage_everything,
+                max_staging=max_staging_area,
+                debug=True
+            )
+
+            if i < 10: # float precision ( 0.999999 = 1.0 fails)
+                self.assertTrue(prev_prob_1 < voxel_stat[0][0])
+                self.assertTrue(prev_prob_2 > voxel_stat[1][0])
+
+            self.assertTrue(0.0 <= voxel_stat[0][0] <= 1.0)
+            self.assertTrue(0.0 <= voxel_stat[1][0] <= 1.0)
+
+            prev_prob_1 = voxel_stat[0][0]
+            prev_prob_2 = voxel_stat[1][0]
+
+
+            access_count += 1
+
+
+    def test_shouldStageOneVoxel(self):
+        v = Voxelizer(self.computeShader, None)
+        v.init(0.5)
+
+        voxel_index = np.array([[0, 0, 0, 0], [0, 2, 0, 1]]).astype(np.int32)
+        voxel_data = np.zeros((2, v.max_points)).astype(np.int32)
+        voxel_stat = np.zeros((2, 4)).astype(np.float32)
+
+        voxel_stat[0][self.STAT_IS_STAGED] = 0.0  # none of the voxels are "already staged"
+        voxel_stat[1][self.STAT_IS_STAGED] = 0.0
+
+        voxel_stat[0][self.STAT_PROB] = 1.0  # setting probs > 0.9
+        voxel_stat[1][self.STAT_PROB] = 0.91
+
+        voxel_stat[0][self.STAT_STAGE_STATUS] = self.STAGE_STATUS_READY_TO_STAGE
+        voxel_stat[1][self.STAT_STAGE_STATUS] = self.STAGE_STATUS_NONE
+
+        # 1 point with point index 1
+        voxel_data[0][0] = 3
+        voxel_data[0][1] = 1
+        voxel_data[0][2] = 77
+        voxel_data[0][3] = 11
+
+        # 2 points with index 2,3
+        voxel_data[1][0] = 2
+        voxel_data[1][1] = 2
+        voxel_data[1][2] = 3
+
+        v.compute.bufferVoxelIndex(voxel_index)
+        v.compute.fullBufferVoxelData(voxel_data)
+
+        stored_voxel_num = len(voxel_index)
+
+        filter_outliers = False
+        stage_everything = False
+        max_staging_area = 512
+
+        new_voxel_stats, staged_voxels, counter_buffer = v.compute.prepareDispatchVoxelStager(
+            voxel_index=None,
+            stored_voxel_num=stored_voxel_num,
+            max_points=v.max_points,
+            voxel_statistics=voxel_stat,
+            filter_outliers=filter_outliers,
+            stage_everything=stage_everything,
+            max_staging=max_staging_area,
+            debug=True
+        )
+
+        self.assertTrue(counter_buffer[0][0] == 1)
+        self.assertTrue(counter_buffer[0][1] == max_staging_area)
+        self.assertTrue(counter_buffer[0][2] == v.max_points)
+        self.assertTrue(counter_buffer[0][3] == stored_voxel_num)
+
+        self.assertTrue(voxel_stat[0][self.STAT_IS_STAGED] == 1.0)
+        self.assertTrue(voxel_stat[1][self.STAT_IS_STAGED] == 0.0)
+
+        expected_voxel_data = np.zeros((max_staging_area, v.max_points)).astype(np.int32)
+        expected_voxel_data[0][0] = 3
+        expected_voxel_data[0][1] = 1
+        expected_voxel_data[0][2] = 77
+        expected_voxel_data[0][3] = 11
+
+        self.assertTrue(np.array_equal(expected_voxel_data, staged_voxels))
+
+    def test_shouldStageBothVoxel(self):
+        v = Voxelizer(self.computeShader, None)
+        v.init(0.5)
+
+
+
+        voxel_index = np.array([[0, 0, 0, 0], [0, 2, 0, 1]]).astype(np.int32)
+        voxel_data = np.zeros((2, v.max_points)).astype(np.int32)
+        voxel_stat = np.zeros((2, 4)).astype(np.float32)
+
+        voxel_stat[0][self.STAT_IS_STAGED] = 0.0  # none of the voxels are "already staged"
+        voxel_stat[1][self.STAT_IS_STAGED] = 0.0
+
+        voxel_stat[0][self.STAT_PROB] = 1.0  # setting probs > 0.9
+        voxel_stat[1][self.STAT_PROB] = 0.91
+
+        voxel_stat[0][self.STAT_STAGE_STATUS] = self.STAGE_STATUS_READY_TO_STAGE
+        voxel_stat[1][self.STAT_STAGE_STATUS] = self.STAGE_STATUS_READY_TO_STAGE
+
+        # 1 point with point index 1
+        voxel_data[0][0] = 3
+        voxel_data[0][1] = 1
+        voxel_data[0][2] = 77
+        voxel_data[0][3] = 11
+
+        # 2 points with index 2,3
+        voxel_data[1][0] = 2
+        voxel_data[1][1] = 2
+        voxel_data[1][2] = 3
+
+        v.compute.bufferVoxelIndex(voxel_index)
+        v.compute.fullBufferVoxelData(voxel_data)
+
+        stored_voxel_num = len(voxel_index)
+
+        filter_outliers = False
+        stage_everything = False
+        max_staging_area = 512
+
+        new_voxel_stats, staged_voxels, counter_buffer = v.compute.prepareDispatchVoxelStager(
+            voxel_index=None,
+            stored_voxel_num=stored_voxel_num,
+            max_points=v.max_points,
+            voxel_statistics=voxel_stat,
+            filter_outliers=filter_outliers,
+            stage_everything=stage_everything,
+            max_staging=max_staging_area,
+            debug=True
+        )
+
+        self.assertTrue(counter_buffer[0][0] == 2)
+        self.assertTrue(counter_buffer[0][1] == max_staging_area)
+        self.assertTrue(counter_buffer[0][2] == v.max_points)
+        self.assertTrue(counter_buffer[0][3] == stored_voxel_num)
+
+        self.assertTrue(voxel_stat[0][self.STAT_IS_STAGED] == 1.0)
+        self.assertTrue(voxel_stat[1][self.STAT_IS_STAGED] == 1.0)
+
+        expected_voxel_data = np.zeros((max_staging_area, v.max_points)).astype(np.int32)
+        expected_voxel_data[0][0] = 3
+        expected_voxel_data[0][1] = 1
+        expected_voxel_data[0][2] = 77
+        expected_voxel_data[0][3] = 11
+
+        expected_voxel_data[1][0] = 2
+        expected_voxel_data[1][1] = 2
+        expected_voxel_data[1][2] = 3
+
+        # can't seem to mess up stage row order here, as both threads run on the same wavefront
+        self.assertTrue(np.array_equal(expected_voxel_data, staged_voxels))
+
+
+    def test_canStageManyVoxels(self):
+        v = Voxelizer(self.computeShader, None)
+        v.init(0.5)
+
+
+        number_of_voxels = 300
+        voxel_index = np.zeros((number_of_voxels * 2, 4)).astype(np.int32)
+        voxel_data = np.zeros((number_of_voxels * 2, v.max_points)).astype(np.int32)
+        voxel_stat = np.zeros((number_of_voxels * 2, 4)).astype(np.float32)
+
+        for i in range(number_of_voxels):
+            voxel_index[i][3] = i
+            voxel_data[i][0] = i
+            for j in range(i):
+                voxel_data[i][1 + j] = 10 + j
+            voxel_stat[i][self.STAT_STAGE_STATUS] = self.STAGE_STATUS_READY_TO_STAGE
+
+        v.compute.bufferVoxelIndex(voxel_index)
+        v.compute.fullBufferVoxelData(voxel_data)
+
+        stored_voxel_num = number_of_voxels
+
+        filter_outliers = False
+        stage_everything = False
+        max_staging_area = 512
+
+        new_voxel_stats, staged_voxels, counter_buffer = v.compute.prepareDispatchVoxelStager(
+            voxel_index=None,
+            stored_voxel_num=stored_voxel_num,
+            max_points=v.max_points,
+            voxel_statistics=voxel_stat,
+            filter_outliers=filter_outliers,
+            stage_everything=stage_everything,
+            max_staging=max_staging_area,
+            debug=True
+        )
+
+        self.assertTrue(counter_buffer[0][0] == number_of_voxels)
+        self.assertTrue(counter_buffer[0][1] == max_staging_area)
+        self.assertTrue(counter_buffer[0][2] == v.max_points)
+        self.assertTrue(counter_buffer[0][3] == stored_voxel_num)
+
+        for i in range(stored_voxel_num):
+            self.assertTrue(voxel_stat[i][self.STAT_IS_STAGED] == 1.0)
+
+        for i in range(stored_voxel_num): # regardless concurrency
+            stored = staged_voxels[i][0]
+            self.assertTrue(np.array_equal(staged_voxels[i], voxel_data[stored]))
+
+    def test_canStageMaxPointVoxels(self):
+        v = Voxelizer(self.computeShader, None)
+        v.init(0.5)
+
+        v.max_points = 1024
+
+        for k in range(10):
+            number_of_voxels = 300
+            voxel_index = np.zeros((number_of_voxels * 2, 4)).astype(np.int32)
+            voxel_data = np.zeros((number_of_voxels * 2, v.max_points)).astype(np.int32)
+            voxel_stat = np.zeros((number_of_voxels * 2, 4)).astype(np.float32)
+
+            for i in range(number_of_voxels):
+                voxel_index[i][3] = i
+                voxel_data[i][0] = i
+                for j in range(i):
+                    voxel_data[i][1 + j] = 10 + j
+                if i % 5 == 0:
+                    voxel_data[i][1:v.max_points] = i * 100
+                    voxel_data[i][v.max_points - 1] = i
+                    voxel_data[i][0] = 11234
+
+                voxel_data[i][1] = i # adding this for conncurent data match check
+
+                voxel_stat[i][self.STAT_STAGE_STATUS] = self.STAGE_STATUS_READY_TO_STAGE
+
+            v.compute.bufferVoxelIndex(voxel_index)
+            v.compute.fullBufferVoxelData(voxel_data)
+
+            stored_voxel_num = number_of_voxels
+
+            filter_outliers = False
+            stage_everything = False
+            max_staging_area = 512
+
+            new_voxel_stats, staged_voxels, counter_buffer = v.compute.prepareDispatchVoxelStager(
+                voxel_index=None,
+                stored_voxel_num=stored_voxel_num,
+                max_points=v.max_points,
+                voxel_statistics=voxel_stat,
+                filter_outliers=filter_outliers,
+                stage_everything=stage_everything,
+                max_staging=max_staging_area,
+                debug=True
+            )
+
+            self.assertTrue(counter_buffer[0][0] == number_of_voxels)
+            self.assertTrue(counter_buffer[0][1] == max_staging_area)
+            self.assertTrue(counter_buffer[0][2] == v.max_points)
+            self.assertTrue(counter_buffer[0][3] == stored_voxel_num)
+
+            for i in range(stored_voxel_num):
+                self.assertTrue(voxel_stat[i][self.STAT_IS_STAGED] == 1.0)
+
+            for i in range(stored_voxel_num):  # regardless concurrency
+                try:
+                    stored = staged_voxels[i][0] #VOXELS IN THE STAGE CAN HAVE TRACE INDEXES REMAIN AFTER ANOTHER VOXEL (if they contain less points)
+
+                    max_ind = min(stored + 1, v.max_points)
+
+                    ref = voxel_data[staged_voxels[i][1]][1:max_ind]
+                    staged = staged_voxels[i][1:max_ind]
+                    self.assertTrue(np.array_equal(ref, staged))
+                except AssertionError as e:
+                    a = 0
+            print("pass")
+
+    def test_noStageDuplicates(self):
+        pass
 
 
     def getAlignedLidarPoints(self, num_scans):

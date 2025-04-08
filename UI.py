@@ -15,10 +15,17 @@ from Renderer import Renderer
 class UI:
 
     def __init__(self):
+        self.button_stop_build = None
+        self.stop_build = False
+        self.prev_kitti = None
         self.point_counter_var = None
         self.root = None
         self.title = "Pointcloud Visualizer"
-        self.resolution = "400x520"
+        self.w = 400
+        self.h = 520
+        self.x = 10
+        self.y = 10
+        self.resolution = f"{self.w}x{self.h}+{self.x}+{self.y}"
 
         self.button_load = None
         self.button_save = None
@@ -93,21 +100,39 @@ class UI:
             if not self.calibrated:
                 return
 
+        self.renderer.reset() # previous built environment needs to be dropped if dataset changed
+
+        self.button_load.config(state="disabled")
+        self.button_calib.config(state="disabled")
+
+        self.lidar.cleanup()
+        self.oxts.cleanup()
+
         self.lidar.init(path, self.calibration, targetCamera="02", max_read=500, ui=self)
         self.oxts.init(path)
 
         self.setFrameCounter(0, self.lidar.count)
 
-        if self.RENDER_SINGULAR:
-            self.renderConsecutiveFrame(0)
 
+        self.RENDER_SINGULAR = True
+
+        self.renderConsecutiveFrame(0)
+
+        self.toggleUiRenderMode()
+        
+        self.button_mode_switch.config(state="normal")
+        self.button_load.config(state="normal")
+        self.button_calib.config(state="normal")
 
 
     def comm_button_load(self):
 
 
 
-        file_path = filedialog.askdirectory(title="Please select a folder.")
+        file_path = filedialog.askdirectory(title="Please select a folder with a KITTI dataset")
+        if file_path == '':  # cancel
+            self.appendConsole("Data load cancelled!")
+            return
 
         target_dirs = ["image_00", "image_01", "image_02", "image_03", "oxts", "velodyne_points"]
 
@@ -119,7 +144,13 @@ class UI:
 
         if kitti_path is not None:
             self.appendConsole("Kitti dataset folders found!")
-            self.initKittiMode(kitti_path)
+            if self.prev_kitti != kitti_path:
+                self.prev_kitti = kitti_path
+                self.toggleInitialLayoutState()
+                self.initKittiMode(kitti_path)
+            else:
+                self.appendConsole("Previous KITTI folder path was selected")
+                
             return
 
         pointcloud_files = []
@@ -183,6 +214,7 @@ class UI:
         self.root.geometry(self.resolution)
         self.root.configure(bg="black")
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.root.attributes("-topmost", True)
 
         # Make grid layout responsive
         self.root.columnconfigure(0, weight=1)
@@ -235,8 +267,9 @@ class UI:
 
         self.color_mode = tk.BooleanVar()
 
-        tk.Checkbutton(color_mode_frame, text="Color", variable=self.color_mode, bg="black", fg="white",
-                       selectcolor="gray").pack(side="left", padx=10, expand=True)
+        self.radio_color = (tk.Checkbutton(color_mode_frame, text="Color", variable=self.color_mode, bg="black", fg="white",
+                       selectcolor="gray"))
+        self.radio_color.pack(side="left", padx=10, expand=True)
 
         env_buttons_frame = tk.Frame(self.info_frame, bg="black")
         env_buttons_frame.pack(fill="x", pady=(0, 10), padx=5)
@@ -248,6 +281,10 @@ class UI:
                                         bg="gray", fg="black", font=("Arial", 10, "bold"))
         self.button_build.pack(side="left", expand=True, fill="x", padx=(5, 0))
 
+        self.button_stop_build = tk.Button(env_buttons_frame, text="Stop", command=self.comm_button_stop_build,
+                                      bg="gray", fg="black", font=("Arial", 10, "bold"))
+        self.button_stop_build.pack(side="left", expand=True, fill="x", padx=(5, 0))
+
         # === Environment Modes Section ===
         env_mode_frame = tk.Frame(self.info_frame, bg="black", highlightbackground="white", highlightthickness=1)
         env_mode_frame.pack(fill="x", pady=10, padx=5)
@@ -258,10 +295,13 @@ class UI:
         self.icp_mode = tk.BooleanVar()
         self.filter_mode = tk.BooleanVar()
 
-        tk.Checkbutton(env_mode_frame, text="ICP", variable=self.icp_mode, bg="black", fg="white",
-                       selectcolor="gray").pack(side="left", padx=5, expand=True)
-        tk.Checkbutton(env_mode_frame, text="Filter", variable=self.filter_mode, bg="black", fg="white",
-                       selectcolor="gray").pack(side="left", padx=5, expand=True)
+        self.radio_icp = (tk.Checkbutton(env_mode_frame, text="ICP", variable=self.icp_mode, bg="black", fg="white",
+                       selectcolor="gray"))
+        self.radio_icp.pack(side="left", padx=5, expand=True)
+
+        self.radio_filter = (tk.Checkbutton(env_mode_frame, text="Filter", variable=self.filter_mode, bg="black", fg="white",
+                       selectcolor="gray"))
+        self.radio_filter.pack(side="left", padx=5, expand=True)
 
         self.point_counter_var = tk.StringVar()
         tk.Entry(env_mode_frame, textvariable=self.point_counter_var, bg="white", fg="black",
@@ -278,15 +318,31 @@ class UI:
         self.text_output.pack(fill="both", padx=5, pady=5, expand=True)
         self.text_output.config(state="disabled")
 
+        self.toggleInitialLayoutState()
+
         self.root.mainloop()
 
+    def comm_button_stop_build(self):
+        self.stop_build = True
+
+    def toggleInitialLayoutState(self):
+        self.button_save.config(state="disabled")
+        self.button_prev.config(state="disabled")
+        self.button_next.config(state="disabled")
+        self.button_build.config(state="disabled")
+        self.radio_filter.config(state="disabled")
+        self.radio_icp.config(state="disabled")
+        self.button_mode_switch.config(state="disabled")
+        self.radio_color.config(state="disabled")
+        self.button_stop_build.config(state="disabled")
+
     def comm_button_build(self):
+        self.beginBuildUi()
+
         self.renderer.reset()
-        self.setPointCounter(self.renderer.MemoryManager.getMaxPointIndex())
-
-
         self.environment.cleanup()
         self.environment.init(0.5)
+
 
         start_from = 0
         until = self.lidar.count
@@ -294,18 +350,97 @@ class UI:
         separate_colors = self.color_mode.get()
         remove_outliers = self.filter_mode.get()
         pure_imu = not self.icp_mode.get()
-        for i in range(until - start_from):
-            lidardata, oxts = self.environment.getNextFrameData(start_from)
+
+        ind = start_from
+        while not self.stop_build and ind < until:
+            lidardata, oxts = self.environment.getNextFrameData(0)
             self.environment.calculateTransition_imu(lidardata, oxts, point_to_plane=True, debug=False,
-                                                           iterations=20, separate_colors=separate_colors, removeOutliers=remove_outliers, pure_imu=pure_imu )
+                                                           iterations=10, separate_colors=separate_colors, removeOutliers=remove_outliers, pure_imu=pure_imu )
             self.setPointCounter(self.renderer.MemoryManager.getMaxPointIndex())
+            self.setFrameCounter(ind + 1, until)
+            ind += 1
+
+        if self.stop_build:
+            self.appendConsole("Build process stopped")
+
+
+        self.stop_build = False
+
         self.environment.voxelizer.stageAllRemaningVoxels(self)
+
+        self.endBuildUi()
+
+
+    def beginBuildUi(self):
+        self.button_stop_build.config(state="normal")
+        self.button_build.config(state="disabled")
+
+        self.radio_icp.config(state="disabled")
+        self.radio_filter.config(state="disabled")
+        self.button_mode_switch.config(state="disabled")
+        self.radio_color.config(state="disabled")
+        self.button_load.config(state="disabled")
+        self.button_calib.config(state="disabled")
+
+
+    def endBuildUi(self):
+        self.button_stop_build.config(state="disabled")
+        self.button_build.config(state="normal")
+
+        self.radio_icp.config(state="normal")
+        self.radio_filter.config(state="normal")
+        self.button_mode_switch.config(state="normal")
+        self.radio_color.config(state="normal")
+        self.button_load.config(state="normal")
+        self.button_calib.config(state="normal")
 
 
 
     def comm_button_mode(self):
-        self.appendConsole("Switching render modes")
+
         self.RENDER_SINGULAR = not self.RENDER_SINGULAR
+
+        if self.RENDER_SINGULAR:
+            self.last_rendered_pointcloud = None
+            self.renderer.reset()
+            self.setPointCounter(self.renderer.MemoryManager.getMaxPointIndex())
+            self.environment.cleanup()
+            self.renderConsecutiveFrame(0)
+
+
+        else:
+            self.last_rendered_pointcloud = None
+            self.renderer.reset()
+            self.environment.init(0.5)
+
+        self.toggleUiRenderMode()
+
+
+        self.appendConsole("Toggled render mode: ", False)
+        if self.RENDER_SINGULAR:
+            self.appendConsole("Browse")
+        else:
+            self.appendConsole("Build")
+
+
+
+    def toggleUiRenderMode(self):
+        if self.RENDER_SINGULAR:
+            self.button_build.config(state='disabled')
+            self.radio_filter.config(state='disabled')
+            self.radio_icp.config(state='disabled')
+
+            self.button_prev.config(state="normal")
+            self.button_next.config(state="normal")
+            self.radio_color.config(state="normal")
+        else:
+            self.button_build.config(state='normal')
+            self.radio_filter.config(state='normal')
+            self.radio_icp.config(state='normal')
+
+            self.button_prev.config(state="disabled")
+            self.button_next.config(state="disabled")
+
 
     def on_closing(self):
         self.appendConsole("Releasing resourcess...")

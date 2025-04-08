@@ -54,6 +54,8 @@ class EnvironmentConstructor:
 
         self.voxelizer.init(voxel_size)
 
+        self.reference_points = None
+        self.prev_origin = None
 
         self.inited = True
 
@@ -66,6 +68,8 @@ class EnvironmentConstructor:
         self.local_frame_counter = 0
         self.prev_poses = []
         self.framekeys = []
+        self.reference_points = None
+        self.prev_origin = None
 
         self.voxelizer.cleanup()
 
