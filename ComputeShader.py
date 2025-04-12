@@ -643,16 +643,21 @@ class ComputeShader:
 
         self.setCommonUniforms(self.point_plane_shader)
 
+        start = time.time()
         self.dispatchCurrentProgramWait(len(points_b))
+        # time.sleep(1) apparently this point to plane implementation takes no time
 
+        # print("point to plane: " + str(time.time()-start))
+
+        start = time.time()
         summedHB = self.prepareDispatchConcurrentHbSum(len(points_b))
-
+        # print("concurrent sum: " + str(time.time()-start))
 
         # self.getBufferSubdata(self.ssbo_Hs)
         # self.getBufferSubdata(self.ssbo_Bs)
 
         # return self.hs_out, self.bs_out
-        return summedHB[:6, :6], summedHB[:, 7][:6]
+        return summedHB[:6, :6], summedHB[:, 6][:6]
 
 
     def readSummedHB(self, write_to_2):
@@ -760,6 +765,7 @@ class ComputeShader:
         self.setActiveProgram(self.nearest_neighbour)
 
         scan_lines = self.padScanlines(scan_lines)
+        a = scan_lines[:, 1] - scan_lines[:, 0]
 
         self.bufferSubdata(points_a, self.ssbo_points_a)
 

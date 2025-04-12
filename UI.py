@@ -522,7 +522,7 @@ class UI:
         self.lidar = LidarDataReader()
 
 
-        self.renderer = Renderer(0.1, maxNumberOfPoints=20000000)
+        self.renderer = Renderer(0.1, maxNumberOfPoints=20000000, anim=True)
         self.renderingThread = self.renderer.getRenderingThread()
 
         self.compute = ComputeShader() # instantiate after the renderer

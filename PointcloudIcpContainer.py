@@ -35,9 +35,11 @@ class PointcloudIcpContainer:
 
         st = time.time()
         scan_lines = self.getScanLines(points_a, origin)
+        # print("scan line time: " + str(time.time()-st))
 
+        st = time.time()
         self.compute.preparePointPlane(points_a, scan_lines, points_b, origin, False)
-        # print("scan line and prep time: " + str(time.time() - st)) # ~0.1s
+        print("prep time: " + str(time.time() - st)) # ~0.1s
 
 
 
@@ -132,13 +134,15 @@ class PointcloudIcpContainer:
                 time.sleep(0.1)
 
             reference_grid = self.applyIcpStep(reference_grid, R, t)
-        print(c)
+        # print(c)
         if renderer is not None:
             renderer.freePoints(prev_pp)
+        # print("icp plane: " + str(time.time()-start))
 
-        print("icp plane: " + str(time.time()-start))
-
+        start_opt = time.time()
         R_opt, t_opt = self.uniform_optimal_icp(reference_grid, self.getUniformGrid(10))
+        # print("opt trans: " + str(time.time()-start_opt))
+
 
         return t_opt, R_opt
 
@@ -362,8 +366,24 @@ class PointcloudIcpContainer:
 
         pts = self.sphereProjectPoints(pts, origin)
 
+
+        angs = np.arctan2(pts[:,2], pts[:, 0])
+        mask = angs < 0
+        angs[mask] += np.pi * 2
+        prev = angs[:len(angs) - 1]
+        next = angs[1:]
+        diffs = np.abs(next - prev)
+        wraps = diffs > 6
+        inds = np.arange(len(pts) - 1)
+        lines = inds[wraps]
         scan_lines = []
-        index = 0
+
+        begin = 0
+        for l in lines:
+            scan_lines.append((begin, l))
+            begin = l + 1
+
+        """index = 0
         end_index = 0
 
         while end_index < len(pts) - 1:
@@ -371,7 +391,7 @@ class PointcloudIcpContainer:
             scan_lines.append((index, end_index))
             index = end_index + 1
 
-        # print("scans out of algo: " + str(len(scan_lines)))
+        # print("scans out of algo: " + str(len(scan_lines)))"""
         return scan_lines
 
 

@@ -402,10 +402,12 @@ class FunctionalTesting(unittest.TestCase):
 
 
     def test_findClosestPointGpu(self):
+        self.lidarDataReader.init(self.path, self.calibration, "02", 10, None)
+
         origin = np.array([0, 0, 0])
 
         frame1 = 0
-        frame2 = 1
+        frame2 = 0
 
         filenames = self.lidarDataReader.getfilenames()
 
@@ -435,6 +437,9 @@ class FunctionalTesting(unittest.TestCase):
 
 
     def test_pointToPlaneLSShouldConverge(self):
+        self.lidarDataReader.init(self.path, self.calibration, "02", 100, None)
+
+
         origin = np.array([0, 0, 0])
 
         key1 = 36
@@ -466,13 +471,16 @@ class FunctionalTesting(unittest.TestCase):
         self.icpContainer.preparePointToPlane(pts1, origin, pts2)
         print("prep pointplane: " + str(time.time()-start))
 
-
+        time_acc = 0
         for i in range(100):
             start = time.time()
             t, R, delta_transf = self.icpContainer.dispatchPointToPlane(pts2)
             print("dispatch pointplane: " + str(time.time() - start))
+            time_acc += (time.time()-start)
 
+            start = time.time()
             pts2 = self.icpContainer.apply_iteration_of_ls(pts2, t, R)
+            print("application of icp: " + str(time.time()-start))
             reference_grid = self.icpContainer.applyIcpStep(reference_grid, R, t)
 
             self.renderer.freePoints(rgp)
@@ -482,6 +490,9 @@ class FunctionalTesting(unittest.TestCase):
             pp2 = self.renderer.addPoints(pts2, self.white)
             # time.sleep(0.1)
             print(i)
+
+        print("average ICP time:" + str(time_acc/100.0))
+
 
         R_opt, t_opt = self.icpContainer.uniform_optimal_icp(reference_grid, self.icpContainer.getUniformGrid(10))
 
@@ -655,16 +666,10 @@ class FunctionalTesting(unittest.TestCase):
 
 
     def test_showScanLines(self):
-        path = "F://uni//3d-pointcloud//sample2"
+        self.lidarDataReader.init(self.path, self.calibration, "02", 10, None)
 
-        calibration = "F://uni//3d-pointcloud//2011_09_26_calib//2011_09_26"
-
-        oxtsDataReader = OxtsDataReader(path)
-        lidarDataReader = LidarDataReader(path=path, oxtsDataReader=oxtsDataReader, calibration=calibration,
-                                               targetCamera="02", max_read=50)
-
-        names = lidarDataReader.getfilenames()
-        pts, cols = lidarDataReader.getPoints(names[49])
+        names = self.lidarDataReader.getfilenames()
+        pts, cols = self.lidarDataReader.getPoints(names[0])
 
         scan_lines = self.icpContainer.getScanLines(pts, np.array([0,0,0]))
         # print(len(scan_lines))
@@ -672,7 +677,7 @@ class FunctionalTesting(unittest.TestCase):
         lines = []
         colors = []
         for start, end in scan_lines:
-            scan_points = pts[start:end]
+            scan_points = pts[start:end+1]
             line = self.icpContainer.connectPointsInOrder(scan_points)
             lines.extend(line)
             colors.extend(self.renderer.handleColors(line, self.randcolor()))

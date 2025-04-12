@@ -26,7 +26,7 @@ class Renderer:
 
     defaultColor = np.array([64, 224, 208]) / 255.0
 
-    def __init__(self, voxelSize, maxNumberOfPoints=10000000):
+    def __init__(self, voxelSize, maxNumberOfPoints=10000000, anim=False):
         self.buffer_capacity = 1024
         self.inited = False
 
@@ -85,8 +85,9 @@ class Renderer:
         while not self.getInited():
             a = 0
 
-        self.grid_thread = threading.Thread(target=self.getGridLines, daemon=True)
-        self.grid_thread.start()
+        if anim:
+            self.grid_thread = threading.Thread(target=self.getGridLines, daemon=True)
+            self.grid_thread.start()
 
 
 

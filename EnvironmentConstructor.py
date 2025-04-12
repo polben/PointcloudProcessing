@@ -185,7 +185,7 @@ class EnvironmentConstructor:
         else:
             total_frame_time = time.time()
 
-
+            start_alignment = time.time()
             p_imu_pos, p_refined_pos, p_imu_rotation, p_refined_rotation, p_time = self.prev_poses[self.total_frame_counter - 1]
 
             delta_velocity = self.getDeltaVelocity( current_velocity=current_velocity,
@@ -198,8 +198,10 @@ class EnvironmentConstructor:
 
 
             aligned_points = (current_rotation @ points.T).T + estimated_position
+            print("alignment time: " + str(time.time()-start_alignment))
 
 
+            start_refinement = time.time()
             if not pure_imu:
 
                 full_iteration = False
@@ -228,11 +230,11 @@ class EnvironmentConstructor:
                 refined_rotation = current_rotation
                 if debug:
                     time.sleep(1)
+            print("refinement time: " + str(time.time()-start_refinement))
 
-
-
+            start_voxel = time.time()
             self.voxelizer.addPoints(refined_points, colors)
-
+            print("voxelization: " + str(time.time()-start_voxel))
 
             self.local_frame_counter += 1
 

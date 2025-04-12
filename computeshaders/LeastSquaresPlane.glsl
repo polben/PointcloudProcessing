@@ -19,7 +19,11 @@ void getH(in float[6] J_in, uint idx, float valid) {
     for (int i = 0; i < 6; i++) {
         for (int j = 0; j < 6; j++) {
             float sum_val = J_in[i] * J_in[j]; // J^T J for a 1x6 Jacobian
-            Hs[idx][i][j] = sum_val * valid;
+            if (!isnan(sum_val)) {
+                Hs[idx][i][j] = sum_val * valid;
+            }else{
+                Hs[idx][i][j] = 0.0;
+            }
         }
     }
 }
@@ -28,7 +32,11 @@ void getB(in float[6] J_i, in float e_i, uint idx, float valid) {
     for (int i = 0; i < 6; i++) {
         float sum_val = J_i[i] * e_i; // J^T * e
         // Bs[idx][i] = sum_val * valid;
-        Hs[idx][i][7] = sum_val * valid;
+        if (!isnan(sum_val)) {
+            Hs[idx][i][6] = sum_val * valid;
+        }else{
+            Hs[idx][i][6] = 0.0;
+        }
     }
 
 }
@@ -48,6 +56,8 @@ void main() {
     float minDist = 1.23e20;
 
     int minind = findClosestPoint(refPoint, idx);
+    barrier();
+
     minDist = distsq(refPoint, points_a[minind]);
 
 
