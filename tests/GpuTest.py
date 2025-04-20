@@ -13,14 +13,13 @@ from tests.FunctionalTesting import FunctionalTesting
 class GpuTest(unittest.TestCase):
 
     def setUp(self):
-        path = "F://uni//3d-pointcloud//2011_09_26_drive_0005_sync"
-        calibration = "F://uni//3d-pointcloud//2011_09_26_calib//2011_09_26"
+        self.path = "./../sample_data"
+        self.calibration = "./../sample_data/sample_calib/2011_09_26"
 
-        self.oxtsDataReader = OxtsDataReader(path)
-        self.lidarDataReader = LidarDataReader(path=path, oxtsDataReader=self.oxtsDataReader, calibration=calibration,
-                                          targetCamera="02")
+        self.oxtsDataReader = OxtsDataReader()
+        self.lidarDataReader = LidarDataReader()
 
-        self.pointcloudAlignment = PointcloudAlignment(self.lidarDataReader, self.oxtsDataReader)
+        self.pointcloudAlignment = PointcloudAlignment()
 
         self.computeShader = ComputeShader()
         self.icpContainer = PointcloudIcpContainer(self.computeShader, self.pointcloudAlignment)
@@ -29,6 +28,8 @@ class GpuTest(unittest.TestCase):
 
         self.baseComputeShader = "FunctionalBase.glsl"
         self.mainRegex = self.computeShader.main_shadercode_regex
+
+        self.lidarDataReader.init(self.path, self.calibration, "02", 30, None)
 
     def tearDown(self):
         self.computeShader.cleanup()
@@ -43,7 +44,6 @@ class GpuTest(unittest.TestCase):
         self.assertTrue(self.computeShader.nearest_neighbour is not None)
 
     def test_shouldInitBuffers(self):
-        self.assertTrue(self.computeShader.ssbo_Bs is not None)
         self.assertTrue(self.computeShader.ssbo_Hs is not None)
         self.assertTrue(self.computeShader.ssbo_correspondence is not None)
         self.assertTrue(self.computeShader.ssbo_points_b is not None)
@@ -56,7 +56,6 @@ class GpuTest(unittest.TestCase):
     def test_shouldCleanupBuffers(self):
         self.computeShader.cleanup()
 
-        self.assertTrue(self.computeShader.ssbo_Bs is None)
         self.assertTrue(self.computeShader.ssbo_Hs is None)
         self.assertTrue(self.computeShader.ssbo_correspondence is None)
         self.assertTrue(self.computeShader.ssbo_points_b is None)
@@ -69,7 +68,6 @@ class GpuTest(unittest.TestCase):
 
     def test_initialOutRealloc(self):
         self.assertEqual(len(self.computeShader.hs_out), self.computeShader.maxPointsPerCloud)
-        self.assertEqual(len(self.computeShader.bs_out), self.computeShader.maxPointsPerCloud)
         self.assertEqual(len(self.computeShader.corr_out), self.computeShader.maxPointsPerCloud)
 
     def test_shouldCompileBaseShader(self):
@@ -304,7 +302,7 @@ class GpuTest(unittest.TestCase):
         start = time.time()
         self.computeShader.prepareDispatchNormals(pts, scan_lines, origin)
         print("gpu normal time: " + str(time.time() - start))
-        normals = self.computeShader.normals_out_a
+        normals = self.computeShader.normals_out_a[:50000]
 
         normals_ref = FunctionalTesting.getNormals(scan_lines, pts, origin, self.icpContainer)
         normals_ref = np.array(normals_ref).astype(np.float32)
@@ -324,7 +322,7 @@ class GpuTest(unittest.TestCase):
         print("error: " + str(err) + " / " + str(len(diff)))
         self.assertTrue(ok_percent > 0.999)
 
-    def test_shouldSetHandB(self):
+    def test_shouldSetHs(self):
         code = """
             void main(){
                 uvec2 id = gl_GlobalInvocationID.xy;
@@ -340,12 +338,6 @@ class GpuTest(unittest.TestCase):
                 Hs[idx][0][3] = float(lens_data.z);
                 Hs[idx][0][4] = float(idx);
                 Hs[idx][7][7] = -1.0;
-                
-                Bs[idx][0] = -999.3;
-                Bs[idx][1] = float(idx);
-                Bs[idx][2] = float(lens_data.x);
-                Bs[idx][3] = float(lens_data.y);
-                Bs[idx][4] = float(lens_data.z);
             }
         """
 
@@ -372,7 +364,6 @@ class GpuTest(unittest.TestCase):
         h2 = self.computeShader.hs_out[1]
         h3 = self.computeShader.hs_out[2]
 
-        self.computeShader.getBufferSubdata(self.computeShader.ssbo_Bs)
 
 
 
@@ -452,15 +443,11 @@ class GpuTest(unittest.TestCase):
 
         self.computeShader.prepareLS(grid1, [(0, 0)], grid2, np.array([0, 0, 0]), True)
 
-        Hs_cuda, Bs_cuda = self.computeShader.dispatchLS(grid2)
-        H_cuda = np.sum(Hs_cuda, axis=0)[:6, :6]
-        B_cuda = np.sum(Bs_cuda, axis=0)[:6]
-
+        H_cuda, B_cuda = self.computeShader.dispatchLS(grid2)
 
 
         self.assertTrue(np.allclose(H_cuda, H_numpy, atol=self.tolerance))
         self.assertTrue(np.allclose(B_cuda, B_numpy, atol=self.tolerance))
 
-    def test_paralellSum(self):
-        PointcloudIcpContainer.paralellSumArray()
-        self.assertTrue(True)
+
+

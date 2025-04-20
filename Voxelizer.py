@@ -113,6 +113,7 @@ class Voxelizer:
             )
 
 
+
         self.voxel_stats, voxels_to_render = self.compute.prepareDispatchVoxelStager(self.voxel_index, self.stored_voxels, self.max_points, self.voxel_stats, filter_outliers=self.filter_outliers, stage_everything=False)
 
         if printt:
@@ -618,8 +619,8 @@ class Voxelizer:
         lines = []
         offset = -np.array([self.voxel_size, self.voxel_size, self.voxel_size]) / 2
         for i in range(len(vox_coords)):
-            v = vox_coords[i]
-            edges = Renderer.unitCubeEdges() * self.voxel_size + v + offset
+            v = np.array([vox_coords[i]])
+            edges = Renderer.unitCubeEdges() * self.voxel_size + v + offset.T
             lines.extend(edges)
 
         return lines

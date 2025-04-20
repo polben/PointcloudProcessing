@@ -534,6 +534,8 @@ class Renderer:
         glfw.destroy_window(self.window)
         glfw.terminate()
 
+        self.inited = False
+
     @staticmethod
     def unitCube():
         return [

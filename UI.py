@@ -14,7 +14,7 @@ from Renderer import Renderer
 
 class UI:
 
-    def __init__(self):
+    def __init__(self, lauch=True):
         self.button_stop_build = None
         self.stop_build = False
         self.prev_kitti = None
@@ -26,6 +26,7 @@ class UI:
         self.x = 10
         self.y = 10
         self.resolution = f"{self.w}x{self.h}+{self.x}+{self.y}"
+        self.testing = not lauch
 
         self.button_load = None
         self.button_save = None
@@ -86,7 +87,8 @@ class UI:
 
         self.rendering_mode = self.RENDER_SINGULAR
 
-        self.intializeComponents()
+        if lauch:
+            self.intializeComponents()
 
         self.createUiLayout()
 
@@ -444,36 +446,36 @@ class UI:
 
     def on_closing(self):
         self.appendConsole("Releasing resourcess...")
+        if not self.testing:
+            self.appendConsole("shaders...", False)
+            self.compute.cleanup()
+            self.appendConsole("released!")
 
-        self.appendConsole("shaders...", False)
-        self.compute.cleanup()
-        self.appendConsole("released!")
+            self.root.update()
 
-        self.root.update()
+            self.appendConsole("renderer...", False)
+            self.renderer.close()
+            self.appendConsole("released!")
+            self.root.update()
 
-        self.appendConsole("renderer...", False)
-        self.renderer.close()
-        self.appendConsole("released!")
-        self.root.update()
+            self.appendConsole("oxts data...", False)
+            self.oxts.cleanup()
+            self.appendConsole("released!")
+            self.root.update()
 
-        self.appendConsole("oxts data...", False)
-        self.oxts.cleanup()
-        self.appendConsole("released!")
-        self.root.update()
+            self.appendConsole("lidar data...", False)
+            self.lidar.cleanup()
+            self.appendConsole("released!")
+            self.root.update()
 
-        self.appendConsole("lidar data...", False)
-        self.lidar.cleanup()
-        self.appendConsole("released!")
-        self.root.update()
+            self.appendConsole("environment data...", False)
+            self.environment.cleanup()
+            self.appendConsole("released!")
+            self.root.update()
 
-        self.appendConsole("environment data...", False)
-        self.environment.cleanup()
-        self.appendConsole("released!")
-        self.root.update()
+            self.renderingThread.join()
 
-        self.renderingThread.join()
-
-        time.sleep(1)
+            time.sleep(1)
 
         self.root.destroy()  # This actually closes the window
 

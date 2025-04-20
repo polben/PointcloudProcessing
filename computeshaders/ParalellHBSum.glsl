@@ -4,16 +4,8 @@
 // float Hs[][8][8]; bound from base!!
 
 
-layout(std430, binding = 15) buffer ConcurrentHB1 {
-    float HB1[][8][8];
-};
-
-layout(std430, binding = 16) buffer ConcurrentHB2 {
+layout(std430, binding = 13) buffer ConcurrentHB2 {
     float HB2[][8][8];
-};
-
-layout(std430, binding = 11) buffer DebugBuffer {
-    vec4 debug[];
 };
 
 uniform uvec4 properties;

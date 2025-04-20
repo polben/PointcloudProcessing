@@ -13,5 +13,5 @@ class UIFunctionality(unittest.TestCase):
 
 
     def test_startUi(self):
-        ui = UI()
+        ui = UI(lauch=False)
         self.assertIsNone(None)

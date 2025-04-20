@@ -45,9 +45,7 @@ class ComputeShader:
         self.ssbo_scan_lines = None
         self.ssbo_correspondence = None
         self.ssbo_Hs = None
-        self.ssbo_Bs = None
         self.ssbo_normals_a = None
-        self.ssbo_normals_b = None
 
         self.ssbo_voxel_index = None
         self.ssbo_voxel_data = None
@@ -59,7 +57,6 @@ class ComputeShader:
         self.ssbo_single_counter = None
         self.ssbo_voxel_stat = None
 
-        self.ssbo_concurrent_hb_1 = None
         self.ssbo_concurrent_hb_2 = None
 
         self.origin = None
@@ -70,24 +67,20 @@ class ComputeShader:
         self.lens_data = None
 
         self.Hs = None
-        self.Bs = None
         self.points_a = None
         self.points_b = None
         self.scan_lines = None
         self.correspondences = None
         self.normals_a = None
-        self.normals_b = None
 
-        self.concurrent_hb_1 = None
         self.concurrent_hb_2 = None
 
         self.hs_out = None
-        self.bs_out = None
         self.corr_out = None
         self.prev_out_a = 0
         self.prev_out_b = 0
         self.normals_out_a = None
-        self.normals_out_b = None
+        self.debug_data = None
 
         self.voxel_stage_out = None
 
@@ -134,9 +127,7 @@ class ComputeShader:
         self.ssbo_scan_lines = glGenBuffers(1)
         self.ssbo_correspondence = glGenBuffers(1)
         self.ssbo_Hs = glGenBuffers(1)
-        self.ssbo_Bs = glGenBuffers(1)
         self.ssbo_normals_a = glGenBuffers(1)
-        self.ssbo_normals_b = glGenBuffers(1)
 
         self.ssbo_voxel_data = glGenBuffers(1)
         self.ssbo_voxel_index = glGenBuffers(1)
@@ -148,7 +139,6 @@ class ComputeShader:
         self.ssbo_voxel_stat = glGenBuffers(1)
         self.ssbo_voxel_stage = glGenBuffers(1)
 
-        self.ssbo_concurrent_hb_1 = glGenBuffers(1)
         self.ssbo_concurrent_hb_2 = glGenBuffers(1)
 
         self.points_a = np.zeros((self.maxPointsPerCloud, 4)).astype(np.float32)
@@ -156,17 +146,19 @@ class ComputeShader:
         self.scan_lines = np.zeros((self.maxScans, 4)).astype(np.uint32)
         self.correspondences = np.zeros((self.maxPointsPerCloud, 4)).astype(np.float32)
         self.Hs = np.zeros((self.maxPointsPerCloud, 8, 8)).astype(np.float32)
-        self.Bs = np.zeros((self.maxPointsPerCloud, 8)).astype(np.float32)
         self.normals_a = np.zeros((self.maxPointsPerCloud, 4)).astype(np.float32)
-        self.normals_b = np.zeros((self.maxPointsPerCloud, 4)).astype(np.float32)
+        self.debug_data = np.zeros((self.maxPointsPerCloud, 4)).astype(np.float32)
 
-        self.concurrent_hb_1 = np.zeros((self.maxPointsPerCloud, 8, 8)).astype(np.float32)
         self.concurrent_hb_2 = np.zeros((self.maxPointsPerCloud, 8, 8)).astype(np.int32)
 
         self.reallocate_out(np.array([self.maxPointsPerCloud, self.maxPointsPerCloud, 0, 0]))
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_points_a)
         glBufferData(GL_SHADER_STORAGE_BUFFER, self.points_a.nbytes, None, GL_DYNAMIC_DRAW)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_debug_buffer)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, self.debug_data.nbytes, None, GL_DYNAMIC_DRAW)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_points_b)
@@ -182,27 +174,15 @@ class ComputeShader:
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_Hs)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, self.Hs.nbytes, None, GL_DYNAMIC_DRAW)
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_Bs)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, self.Bs.nbytes, None, GL_DYNAMIC_DRAW)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, self.Hs.nbytes, None, GL_DYNAMIC_COPY)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_normals_a)
         glBufferData(GL_SHADER_STORAGE_BUFFER, self.normals_a.nbytes, None, GL_DYNAMIC_DRAW)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_normals_b)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, self.normals_b.nbytes, None, GL_DYNAMIC_DRAW)
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_concurrent_hb_1)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, self.concurrent_hb_1.nbytes, None, GL_DYNAMIC_DRAW)
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
-
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_concurrent_hb_2)
-        glBufferData(GL_SHADER_STORAGE_BUFFER, self.concurrent_hb_2.nbytes, None, GL_DYNAMIC_DRAW)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, self.concurrent_hb_2.nbytes, None, GL_DYNAMIC_COPY)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
         # voxel buffers are more dynamic, have to allocate on the spot
@@ -212,18 +192,39 @@ class ComputeShader:
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, self.ssbo_scan_lines)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, self.ssbo_correspondence)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, self.ssbo_Hs)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, self.ssbo_Bs)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, self.ssbo_normals_a)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, self.ssbo_normals_b)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, self.ssbo_voxel_index)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, self.ssbo_voxel_data)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, self.ssbo_unknown_points)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, self.ssbo_debug_buffer)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 12, self.ssbo_voxel_stage)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 13, self.ssbo_single_counter)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 14, self.ssbo_voxel_stat)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 15, self.ssbo_concurrent_hb_1)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 16, self.ssbo_concurrent_hb_2)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, self.ssbo_normals_a)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, self.ssbo_voxel_index)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, self.ssbo_voxel_data)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, self.ssbo_unknown_points)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, self.ssbo_debug_buffer)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, self.ssbo_voxel_stage)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, self.ssbo_single_counter)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 12, self.ssbo_voxel_stat)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 13, self.ssbo_concurrent_hb_2)
+
+        max_ssbo_bindings = glGetIntegerv(GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS)
+
+        # Number of SSBOs per shader stage (e.g., vertex, fragment, compute)
+        max_vertex_ssbos = glGetIntegerv(GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS)
+        max_fragment_ssbos = glGetIntegerv(GL_MAX_FRAGMENT_SHADER_STORAGE_BLOCKS)
+        max_compute_ssbos = glGetIntegerv(GL_MAX_COMPUTE_SHADER_STORAGE_BLOCKS)
+
+        print("Total SSBO bindings:", max_ssbo_bindings)
+        print("Vertex Shader SSBOs:", max_vertex_ssbos)
+        print("Fragment Shader SSBOs:", max_fragment_ssbos)
+        print("Compute Shader SSBOs:", max_compute_ssbos)
+
+        print(glGetError())
+
+        max_shared = glGetIntegerv(GL_MAX_COMPUTE_SHARED_MEMORY_SIZE)
+        print(f"MAX_SHARED = {max_shared} bytes")
+
+        x = glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, 0)
+        print(f"Max workgroup size in X dimension: {x}")
+
+
+
+        a = 0
 
 
 
@@ -233,8 +234,6 @@ class ComputeShader:
         if len_b != self.prev_out_b:
             self.corr_out = np.zeros((len_b, 4)).astype(np.float32)
             self.hs_out = np.zeros((len_b, 8, 8)).astype(np.float32)
-            self.bs_out = np.zeros((len_b, 8)).astype(np.float32)
-            self.normals_out_b = np.zeros((len_b, 4)).astype(np.float32)
 
             self.prev_out_b = len_b
         if len_a != self.prev_out_a:
@@ -263,17 +262,9 @@ class ComputeShader:
             glDeleteBuffers(1, [self.ssbo_Hs])
             self.ssbo_Hs = None
 
-        if self.ssbo_Bs is not None:
-            glDeleteBuffers(1, [self.ssbo_Bs])
-            self.ssbo_Bs = None
-
         if self.ssbo_normals_a is not None:
             glDeleteBuffers(1, [self.ssbo_normals_a])
             self.ssbo_normals_a = None
-
-        if self.ssbo_normals_b is not None:
-            glDeleteBuffers(1, [self.ssbo_normals_b])
-            self.ssbo_normals_b = None
 
         if self.ssbo_voxel_index is not None:
             glDeleteBuffers(1, [self.ssbo_voxel_index])
@@ -302,10 +293,6 @@ class ComputeShader:
         if self.ssbo_voxel_stat is not None:
             glDeleteBuffers(1, [self.ssbo_voxel_stat])
             self.ssbo_voxel_stat = None
-
-        if self.ssbo_concurrent_hb_1 is not None:
-            glDeleteBuffers(1, [self.ssbo_concurrent_hb_1])
-            self.ssbo_concurrent_hb_1 = None
 
         if self.ssbo_concurrent_hb_2 is not None:
             glDeleteBuffers(1, [self.ssbo_concurrent_hb_2])
@@ -344,18 +331,8 @@ class ComputeShader:
             if np_array.dtype != np.float32:
                 np_array = np_array.astype(np.float32)
 
-        if ssbo == self.ssbo_Bs:
-            target_ssbo = self.ssbo_Bs
-            if np_array.dtype != np.float32:
-                np_array = np_array.astype(np.float32)
-
         if ssbo == self.ssbo_normals_a:
             target_ssbo = self.ssbo_normals_a
-            if np_array.dtype != np.float32:
-                np_array = np_array.astype(np.float32)
-
-        if ssbo == self.ssbo_normals_b:
-            target_ssbo = self.ssbo_normals_b
             if np_array.dtype != np.float32:
                 np_array = np_array.astype(np.float32)
 
@@ -375,14 +352,6 @@ class ComputeShader:
 
             target_out = self.Hs
             target_size_bytes = self.maxPointsPerCloud * hs_unit_size # lens_data1 > pts a len, lens2 > b len
-            target_ssbo = ssbo_from
-
-        if ssbo_from == self.ssbo_Bs:
-            bs_unit_size = self.float_size * 8
-
-
-            target_out = self.Bs
-            target_size_bytes = self.maxPointsPerCloud * bs_unit_size # lens_data1 > pts a len, lens2 > b len
             target_ssbo = ssbo_from
 
         if ssbo_from == self.ssbo_correspondence:
@@ -421,15 +390,6 @@ class ComputeShader:
             target_size_bytes = self.maxPointsPerCloud * norm_unit_size  # lens_data1 > pts a len, lens2 > b len
             target_ssbo = ssbo_from
 
-        if ssbo_from == self.ssbo_normals_b:
-            norm_unit_size = self.float_size * 4
-
-            target_out = self.normals_b
-            target_size_bytes = self.maxPointsPerCloud * norm_unit_size  # lens_data1 > pts a len, lens2 > b len
-            target_ssbo = ssbo_from
-
-
-
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, target_ssbo)
         glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, target_size_bytes,
@@ -450,14 +410,6 @@ class ComputeShader:
             target_size_bytes = self.lens_data[1] * hs_unit_size # lens_data1 > pts a len, lens2 > b len
             target_ssbo = ssbo_from
 
-        if ssbo_from == self.ssbo_Bs:
-            bs_unit_size = self.float_size * 8
-
-
-            target_out = self.bs_out
-            target_size_bytes = self.lens_data[1] * bs_unit_size # lens_data1 > pts a len, lens2 > b len
-            target_ssbo = ssbo_from
-
         if ssbo_from == self.ssbo_correspondence:
             corr_unit_size = self.float_size * 4
 
@@ -471,13 +423,6 @@ class ComputeShader:
 
             target_out = self.normals_out_a
             target_size_bytes = self.lens_data[0] * norm_unit_size  # lens_data1 > pts a len, lens2 > b len
-            target_ssbo = ssbo_from
-
-        if ssbo_from == self.ssbo_normals_b:
-            norm_unit_size = self.float_size * 4
-
-            target_out = self.normals_out_b
-            target_size_bytes = self.lens_data[1] * norm_unit_size  # lens_data1 > pts a len, lens2 > b len
             target_ssbo = ssbo_from
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, target_ssbo)
@@ -533,7 +478,12 @@ class ComputeShader:
         num_groups_y = 1  # int(np.ceil(len(scan_lines) / 32.0))
         glDispatchCompute(num_groups_x, num_groups_y, 1)
 
-        glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT)
+        # glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT)
+        glMemoryBarrier(
+            GL_SHADER_STORAGE_BARRIER_BIT |
+            GL_BUFFER_UPDATE_BARRIER_BIT |
+            GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT
+        )
 
     def setInitialScanGuess(self):
         self.correspondences[:, 3] = -1.0
@@ -565,6 +515,7 @@ class ComputeShader:
         self.saveUniformInfo(points_a, points_b, origin, scan_lines, debug_mode)
 
     def dispatchLS(self, points_b):
+        self.setActiveProgram(self.least_squares_point)
 
         self.bufferSubdata(points_b, self.ssbo_points_b)
 
@@ -573,12 +524,9 @@ class ComputeShader:
 
         self.dispatchCurrentProgramWait(len(points_b))
 
+        summedHB = self.prepareDispatchConcurrentHbSum(len(points_b))
 
-
-        self.getBufferSubdata(self.ssbo_Hs)
-        self.getBufferSubdata(self.ssbo_Bs)
-
-        return self.hs_out, self.bs_out
+        return summedHB[:6, :6], summedHB[:, 6][:6]
 
     def padScanlines(self, scan_lines):
         scan_lines = np.array(scan_lines).astype(np.uint32)
@@ -638,10 +586,10 @@ class ComputeShader:
 
     def dispatchPointPlane(self, points_b):
         self.setActiveProgram(self.point_plane_shader)
+        self.setCommonUniforms(self.point_plane_shader)
 
         self.bufferSubdata(points_b, self.ssbo_points_b)
 
-        self.setCommonUniforms(self.point_plane_shader)
 
         start = time.time()
         self.dispatchCurrentProgramWait(len(points_b))
@@ -680,6 +628,7 @@ class ComputeShader:
         return result
 
     def prepareDispatchConcurrentHbSum(self, num_points_b):
+        self.setActiveProgram(self.concurrent_sum)
 
 
 
@@ -689,20 +638,31 @@ class ComputeShader:
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)"""
 
 
-
         # experimental data
-        """indata = np.ones((num_points_b, 8, 8)).astype(np.float32)
+        """indata = np.ones((200, 8, 8)).astype(np.float32)
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_Hs)
         glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, indata.nbytes, indata)
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)"""
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
+        sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+        glClientWaitSync(sync,
+                        GL_SYNC_FLUSH_COMMANDS_BIT,
+                        GLuint64(1_000_000_000))  # 1s timeout
+        glDeleteSync(sync)
 
+        indata = np.zeros_like(indata)"""
 
+        """glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_Hs)
 
-        """self.getBufferSubdata(self.ssbo_Hs) # indeed identical data to cpu sum
-        H = np.nansum(self.hs_out, axis=0)
-        a = 0"""
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, self.Hs.nbytes,
+                           self.Hs.ctypes.data_as(c_void_p))
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
+        H = np.nansum(self.Hs, axis=0)
+        print(H)
+        a = 0
+        return H"""
 
 
 
@@ -710,7 +670,6 @@ class ComputeShader:
 
 
         write_to_2 = True
-        self.setActiveProgram(self.concurrent_sum)
         location = glGetUniformLocation(self.concurrent_sum, "properties")
         write_target = 0
         sum_elements = num_points_b
@@ -734,7 +693,15 @@ class ComputeShader:
             glUniform4ui(location, data[0], data[1], data[2], data[3])
 
             glDispatchCompute(block_count, 1, 1)
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT)
+            glMemoryBarrier(
+                GL_SHADER_STORAGE_BARRIER_BIT |
+                GL_BUFFER_UPDATE_BARRIER_BIT |
+                GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT
+            )
+
+            err = glGetError()
+            if err != GL_NO_ERROR:
+                print("OpenGL Error:", hex(err))
 
             write_to_2 = not write_to_2
             sum_elements = block_count
@@ -919,27 +886,39 @@ class ComputeShader:
             debug_data = np.zeros_like(np_points)
             debug_data = self.pad_points(debug_data)
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_debug_buffer)
-            glBufferData(GL_SHADER_STORAGE_BUFFER, debug_data.nbytes, debug_data, GL_DYNAMIC_DRAW)
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, debug_data.nbytes, debug_data)
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
 
         self.bufferSubdata(np_points, self.ssbo_points_a)
 
-        location = glGetUniformLocation(self.voxel_shader, "voxel_lens_data")
+        """location = glGetUniformLocation(self.voxel_shader, "voxel_lens_data")
         lens_data = np.array([len(np_points), stored_voxel_num, begin_index, max_points_to_store]).astype(np.uint32)
-        glUniform4ui(location, lens_data[0], lens_data[1], lens_data[2], lens_data[3])
+        glUniform4ui(location, lens_data[0], lens_data[1], lens_data[2], lens_data[3])"""
+        single_counter_buffer = np.zeros((1, 16)).astype(np.int32)
+        single_counter_buffer[0][0] = len(np_points)
+        single_counter_buffer[0][1] = stored_voxel_num
+        single_counter_buffer[0][2] = begin_index
+        single_counter_buffer[0][3] = max_points_to_store
+        if debug:
+            single_counter_buffer[0][4] = 1
+        else:
+            single_counter_buffer[0][4] = 0
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.ssbo_single_counter)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, single_counter_buffer.nbytes, single_counter_buffer,
+                     GL_DYNAMIC_DRAW)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
 
         location = glGetUniformLocation(self.voxel_shader, "voxel_size")
         glUniform1f(location, voxel_size[0])
         # print("prep time: " + str(time.time()-st))
 
 
-        st = time.time()
         self.dispatchCurrentProgramWait(len(np_points))
-        # print(str(time.time()-st))
 
 
-        st = time.time()
+
         # out_vdat = np.zeros_like(voxel_data).astype(np.int32)
 
 

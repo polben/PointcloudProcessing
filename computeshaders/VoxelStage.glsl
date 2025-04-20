@@ -2,23 +2,23 @@
 
 layout(local_size_x = 64) in;
 
-layout(std430, binding = 8) buffer VoxelIndex {
+layout(std430, binding = 6) buffer VoxelIndex {
     ivec4 voxel_index[];
 };
 
-layout(std430, binding = 9) buffer VoxelData {
+layout(std430, binding = 7) buffer VoxelData {
     int voxel_data[][1024];
 };
 
-layout(std430, binding = 12) buffer RenderStage {
+layout(std430, binding = 10) buffer RenderStage {
     int voxel_stage_data[][1024];
 };
 
-layout(std430, binding = 13) buffer CounterBuffer {
+layout(std430, binding = 11) buffer CounterBuffer {
     int counter_buffer[][16];
 };
 
-layout(std430, binding = 14) buffer VoxelStatBuffer {
+layout(std430, binding = 12) buffer VoxelStatBuffer {
     vec4 voxel_stat[];
 };
 
@@ -262,7 +262,12 @@ void main() {
     }
     voxel_stat[idx][0] = new_prob;
 
-
+    if (max_prob > 0.999){
+        max_prob = 0.999;
+    }
+    if(max_prob < 0.001){
+        max_prob = 0.001;
+    }
     voxel_stat[idx][1] = float(point_count) + max_prob;
 
     // staging status here is either: 0.0 or 0.2

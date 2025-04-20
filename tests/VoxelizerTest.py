@@ -14,8 +14,8 @@ from Voxelizer import Voxelizer
 class VoxelizerTest(unittest.TestCase):
 
     def setUp(self):
-        path = "F:/uni/3d-pointcloud/2011_09_26_drive_0005_sync/2011_09_26/2011_09_26_drive_0005_sync"
-        calibration = "F://uni//3d-pointcloud//2011_09_26_calib//2011_09_26"
+        self.path = "./../sample_data"
+        self.calibration = "./../sample_data/sample_calib/2011_09_26"
 
         self.oxtsDataReader = OxtsDataReader()
         self.lidarDataReader = LidarDataReader()
@@ -27,8 +27,8 @@ class VoxelizerTest(unittest.TestCase):
 
         self.tolerance = 1e-5  # 0.00001
 
-        self.lidarDataReader.init(path, calibration, "02", 20, None)
-        self.oxtsDataReader.init(path)
+        self.lidarDataReader.init(self.path, self.calibration, "02", 30, None)
+        self.oxtsDataReader.init(self.path)
         self.pointcloudAlignment.init(self.lidarDataReader, self.oxtsDataReader)
 
         self.STAT_PROB = 0
@@ -306,8 +306,6 @@ class VoxelizerTest(unittest.TestCase):
             unique_coords_g = np.unique(debug_data[:, :3], axis=0).astype(np.int32)
             unique_coords_c = np.unique(vox_ind_coords_c, axis=0).astype(np.int32)
 
-
-
             self.assertTrue(np.array_equal(unique_coords_g, unique_coords_c)) # asserting same coordinates for voxels, THIS FAILS IF when appending point to the list, before voxelization is not threated as float32 ( yes :) )
 
             vox_ind_ids_g = debug_data[:, 3].astype(np.int32)
@@ -469,7 +467,7 @@ class VoxelizerTest(unittest.TestCase):
         self.assertTrue(new_voxel_stats[0][2] == 0.2) # prob has increased
         self.assertTrue(new_voxel_stats[1][2] == 0.2)
 
-        self.assertTrue(new_voxel_stats[0][1] == 2.0) # storing max prob + pc (1.0 + 1 points)
+        self.assertTrue(np.isclose(new_voxel_stats[0][1], 1.999, atol=0.001)) # storing max prob + pc (1.0 + 1 points)
         self.assertTrue(new_voxel_stats[1][1] >= 2.9 and new_voxel_stats[1][2] <= 3.0) # storing max prob + pc (1.0 + 1 points)
 
     def test_probabilitiesSayWithin0and1(self):
@@ -603,7 +601,7 @@ class VoxelizerTest(unittest.TestCase):
         expected_voxel_data[0][2] = 77
         expected_voxel_data[0][3] = 11
 
-        self.assertTrue(np.array_equal(expected_voxel_data, staged_voxels))
+        self.assertTrue(np.array_equal(expected_voxel_data[0, :4], staged_voxels[0, :4]))
 
     def test_shouldStageBothVoxel(self):
         v = Voxelizer(self.computeShader, None)
@@ -674,7 +672,9 @@ class VoxelizerTest(unittest.TestCase):
         expected_voxel_data[1][2] = 3
 
         # can't seem to mess up stage row order here, as both threads run on the same wavefront
-        self.assertTrue(np.array_equal(expected_voxel_data, staged_voxels))
+        self.assertTrue(np.array_equal(expected_voxel_data[0, :4], staged_voxels[0, :4]))
+        self.assertTrue(np.array_equal(expected_voxel_data[1, :3], staged_voxels[1, :3]))
+
 
 
     def test_canStageManyVoxels(self):

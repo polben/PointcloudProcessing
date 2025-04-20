@@ -22,10 +22,7 @@ class PointcloudIcpContainer:
         self.compute.prepareLS(points_a, scan_lines, points_b, origin, False)
 
     def dispatchPointToPoint(self, points_b):
-        Hs, Bs = self.compute.dispatchLS(points_b)
-
-        H = np.sum(Hs, axis=0)[:6, :6]
-        b = np.sum(Bs, axis=0)[:6]
+        H, b = self.compute.dispatchLS(points_b)
 
         delta_x = np.linalg.solve(H, -b)
         t, R = delta_x[:3], delta_x[3:]

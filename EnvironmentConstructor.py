@@ -11,6 +11,7 @@ class EnvironmentConstructor:
 
 
     def __init__(self, renderer, oxtsdatareader, lidardatareader, icpcontainer, computeShader):
+        self.prev_position = None
         self.renderer = renderer
         self.oxts = oxtsdatareader
         self.lidar = lidardatareader
@@ -111,16 +112,6 @@ class EnvironmentConstructor:
         mask = np.all(colors != defaultColor, axis=1)
         return points[mask], colors[mask]
 
-    def setupTransitions(self, current_oxts):
-        self.prev_position = np.array([0, 0, 0])
-        self.prev_origin = np.array([0, 0, 0])
-        self.prev_velocity = np.array([0, 0, 0])
-        self.angular_velocity = np.eye(3)
-        self.prev_rotation = np.eye(3)
-
-        self.prev_time = current_oxts.getTime()
-
-
 
     def getRefinedTransition(self, reference_points, reference_origin, points_to_refine, iterations, point_to_plane, renderer=None, debug=False, full_iter=False):
         if debug:
@@ -158,8 +149,9 @@ class EnvironmentConstructor:
 
 
         if self.total_frame_counter == 0:
-            self.setupTransitions(current_oxts=current_oxts)
             self.reference_points = (current_rotation @ points.T).T
+            self.prev_origin = np.array([0, 0, 0])
+            self.prev_position = np.array([0,0,0])
 
             self.renderer.addPoints([self.prev_position], self.red)
 

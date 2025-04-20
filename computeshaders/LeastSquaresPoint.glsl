@@ -10,6 +10,14 @@ void getJ(vec3 point, out float j[3][6]) {
 
 }
 
+float nan_check(float val){
+    if (isnan(val)){
+        return 0.0;
+    }
+
+    return val;
+}
+
 void getH(in float[3][6] J_in, out float h[6][6], uint idx, float valid) {
 
     for (int i = 0; i < 6; i++) {
@@ -19,7 +27,7 @@ void getH(in float[3][6] J_in, out float h[6][6], uint idx, float valid) {
                 sum_val += J_in[k][i] * J_in[k][j];
             }
             //h[i][j] = sum_val;
-            Hs[idx][i][j] = sum_val * valid;
+            Hs[idx][i][j] = nan_check(sum_val * valid);
         }
     }
 }
@@ -31,7 +39,7 @@ void getB(in float[3][6] J_i, in float[3] e_i, out float b[6], uint idx, float v
             sum_val += J_i[k][i] * e_i[k];
         }
         //b[i] = sum_val;
-        Bs[idx][i] = sum_val * valid;
+        Hs[idx][i][6] = nan_check(sum_val * valid);
     }
 }
 
@@ -40,19 +48,22 @@ void main() {
     uint idx = id.x;
     uint idy = id.y;
 
+    bool valididx = idx < lens_data.y;
+    vec4 refPoint;
+    float minDist;
+    int minind;
 
-    if (idx >= lens_data.y) { // length of points_b
-        return;
-    }
 
-    float minDist = 1.23e20;
-    int minind = 0;
-    vec4 refPoint = points_b[idx];
+    minDist = 1.23e20;
+    minind = 0;
+    refPoint = points_b[idx];
 
     if (debug_info[0] < 1.0) {
+        if (valididx) {
+            minind = findClosestPoint(refPoint, idx);
+            minDist = distsq(refPoint, points_a[minind]);
+        }
 
-        minind = findClosestPoint(refPoint, idx);
-        minDist = distsq(refPoint, points_a[minind]);
         /*int closest_scan = findClosestScanLine(refPoint);
         int scans_to_check = 10;
 
@@ -68,6 +79,10 @@ void main() {
     }else{
         minDist = 0.0;
         minind = int(idx);
+    }
+    barrier();
+    if(!valididx){
+        return;
     }
 
 

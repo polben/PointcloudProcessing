@@ -22,16 +22,8 @@ layout(std430, binding = 4) buffer Hessians {
     float Hs[][8][8];
 };
 
-layout(std430, binding = 5) buffer Bside {
-    float Bs[][8];
-};
-
-layout(std430, binding = 6) buffer NormalsA {
+layout(std430, binding = 5) buffer NormalsA {
     vec4 normals_a[];
-};
-
-layout(std430, binding = 7) buffer NormalsB {
-    vec4 normals_b[];
 };
 
 uniform vec4 origin;

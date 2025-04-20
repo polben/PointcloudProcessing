@@ -15,15 +15,21 @@ void getJ(vec4 point, vec4 normal, out float j[6]) {
     j[5] = nx * y - ny * x;        // Rotation Z
 }
 
+float nan_check(float val){
+    if (isnan(val)){
+        return 0.0;
+    }
+
+    return val;
+}
+
 void getH(in float[6] J_in, uint idx, float valid) {
     for (int i = 0; i < 6; i++) {
         for (int j = 0; j < 6; j++) {
             float sum_val = J_in[i] * J_in[j]; // J^T J for a 1x6 Jacobian
-            if (!isnan(sum_val)) {
-                Hs[idx][i][j] = sum_val * valid;
-            }else{
-                Hs[idx][i][j] = 0.0;
-            }
+
+            Hs[idx][i][j] = nan_check(sum_val * valid);
+
         }
     }
 }
@@ -31,12 +37,7 @@ void getH(in float[6] J_in, uint idx, float valid) {
 void getB(in float[6] J_i, in float e_i, uint idx, float valid) {
     for (int i = 0; i < 6; i++) {
         float sum_val = J_i[i] * e_i; // J^T * e
-        // Bs[idx][i] = sum_val * valid;
-        if (!isnan(sum_val)) {
-            Hs[idx][i][6] = sum_val * valid;
-        }else{
-            Hs[idx][i][6] = 0.0;
-        }
+        Hs[idx][i][6] = nan_check(sum_val * valid);
     }
 
 }
@@ -48,15 +49,23 @@ void main() {
     uint idx = id.x;
     uint idy = id.y;
 
-    if (idx >= lens_data.y) {
-        return;
+    bool valididx = idx < lens_data.y;
+    vec4 refPoint;
+    float minDist;
+    int minind;
+    if (valididx) {
+
+        refPoint = points_b[idx];
+        minDist = 1.23e20;
+
+        minind = findClosestPoint(refPoint, idx);
     }
 
-    vec4 refPoint = points_b[idx];
-    float minDist = 1.23e20;
-
-    int minind = findClosestPoint(refPoint, idx);
     barrier();
+
+    if (!valididx){
+        return;
+    }
 
     minDist = distsq(refPoint, points_a[minind]);
 
