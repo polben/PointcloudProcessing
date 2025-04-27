@@ -1,3 +1,4 @@
+import math
 import time
 import unittest
 import numpy as np
@@ -7,7 +8,6 @@ from LidarDataReader import LidarDataReader
 from OxtsDataReader import OxtsDataReader
 from PointcloudAlignment import PointcloudAlignment
 from PointcloudIcpContainer import PointcloudIcpContainer
-from tests.FunctionalTesting import FunctionalTesting
 
 
 class GpuTest(unittest.TestCase):
@@ -304,7 +304,7 @@ class GpuTest(unittest.TestCase):
         print("gpu normal time: " + str(time.time() - start))
         normals = self.computeShader.normals_out_a[:50000]
 
-        normals_ref = FunctionalTesting.getNormals(scan_lines, pts, origin, self.icpContainer)
+        normals_ref = GpuTest.getNormals(scan_lines, pts, origin, self.icpContainer)
         normals_ref = np.array(normals_ref).astype(np.float32)
         normals_ref = np.insert(normals_ref, 3, 0, axis=1)
         diff = normals - normals_ref # there is a single normal that is different?
@@ -321,6 +321,138 @@ class GpuTest(unittest.TestCase):
         print(ok_percent)
         print("error: " + str(err) + " / " + str(len(diff)))
         self.assertTrue(ok_percent > 0.999)
+
+    @staticmethod
+    def getNormals(scan_lines, points, origin, icpContainer):
+        def cos(index, refvec, origin, points):
+            lidar_tall = 0.254
+            lidarOffset = np.array([0, lidar_tall / 2.0, 0])
+
+            circvec = points[index] - origin - lidarOffset
+            # v[1] = 0
+            v = circvec / np.linalg.norm(circvec)
+            return np.dot(v, refvec)
+
+        def indmod(index, clen, cbegin):
+            return (index + clen) % clen
+
+        def dir(index, circlen, begin, refVec, origin, points):
+            p1 = begin + indmod(index - 1, circlen, begin)
+            p2 = begin + indmod(index + 1, circlen, begin)
+            """renderer.setLines([points[p1], origin, points[p2], origin],
+                              [np.array([255,0,0]), np.array([255,0,0]), np.array([0,255,0]),np.array([0,255,0])])
+            """
+
+            cos1 = cos(p1, refVec, origin, points) + 1
+            cos2 = cos(p2, refVec, origin, points) + 1
+
+            if cos1 > cos2:
+                return -1.0
+            else:
+                return 1.0
+
+        def distsq(p1, p2):
+            diff = p1 - p2
+            return np.dot(diff, diff)
+
+        def binaryScanCircleCheck(begin, end, refp, origin, points):
+            refvec = icpContainer.sphereProjectPont(refp, origin)
+            circlen = end - begin + 1
+            index = (begin + end) // 2
+            half_c = circlen // 2
+
+            runs = int(math.ceil(math.log2(circlen)))
+
+            for i in range(runs):
+                d = dir(index, circlen, begin, refvec, origin, points)
+                index = indmod(index + int(half_c * d), circlen, begin)
+                half_c = int(math.ceil(half_c / 2.0))
+
+            return begin + index
+
+        def binarySearchAndCheck(scan_lines, scan_index, refp, points, origin, next_closest=None):
+
+            begin, end = scan_lines[scan_index]
+            closest = binaryScanCircleCheck(begin, end, refp, origin, points)
+
+            check = 5
+            circlen = end - begin + 1
+            index = closest - begin
+
+            mindist = 1.23e30
+            for i in range(-check, check):
+                test = begin + indmod(index + i, circlen, begin)
+
+                d = distsq(refp, points[test])
+
+                if d < mindist and test != next_closest:
+                    mindist = d
+                    closest = test
+
+            return closest
+
+        def getScanlineOfPoint(scanlines, pointindex):
+            for i in range(len(scanlines)):
+                begin, end = scanlines[i]
+                if begin <= pointindex and pointindex <= end:
+                    return i
+
+        def getClosestAboveOrBelow(scan_lines, minscan, refp, points, origin, point_index):
+            if minscan == len(scan_lines) - 1:
+                return binarySearchAndCheck(scan_lines, minscan - 1, refp, points, origin, point_index)
+
+            if minscan == 0:
+                return binarySearchAndCheck(scan_lines, minscan + 1, refp, points, origin, point_index)
+
+            minabove = binarySearchAndCheck(scan_lines, minscan - 1, refp, points, origin)
+            minbelow = binarySearchAndCheck(scan_lines, minscan + 1, refp, points, origin)
+
+            minabove_point = points[minabove]
+            minbelow_point = points[minbelow]
+
+            # addLine(refp, minabove_point + np.array([0, 0.01, 0]), getcolor(100,100,100))
+            # addLine(refp, minbelow_point + np.array([0, 0.01, 0]), getcolor(100,100,100))
+
+            if distsq(refp, minbelow_point) < distsq(refp, minabove_point):
+                return minbelow
+            else:
+                return minabove
+
+        def getNormal(scan_lines, point_index, points, origin):
+            refp = points[point_index]
+
+            minscan = getScanlineOfPoint(scan_lines, point_index)
+
+            closest_online = binarySearchAndCheck(scan_lines, minscan, refp, points, origin, point_index)
+            closest_next = getClosestAboveOrBelow(scan_lines, minscan, refp, points, origin, point_index)
+
+            v1 = points[closest_online] - refp
+            v2 = points[closest_next] - refp
+            # addLine(refp, v1 + refp, getcolor(0,255,0))
+            # addLine(refp, v2 + refp, getcolor(0,0,255))
+
+            cross = np.cross(v1, v2)
+            return cross / np.linalg.norm(cross)
+
+        def normalTowardsOrigin(origin, normal, pointind, points):
+            to_origin = origin - points[pointind]
+            to_origin_n = to_origin / np.linalg.norm(to_origin)
+
+            if np.dot(normal, to_origin_n) > np.dot(-normal, to_origin_n):
+                return normal
+            else:
+                return -normal
+
+        normals = []
+        for i in range(0, len(points[:50000]), 1):
+            normal = getNormal(scan_lines, i, points, origin)
+            normal = normalTowardsOrigin(origin, normal, i, points)
+            normals.append(normal)
+
+            if i % 2000 == 0:
+                print(str(i) + "/50000")
+
+        return normals
 
     def test_shouldSetHs(self):
         code = """
@@ -447,7 +579,7 @@ class GpuTest(unittest.TestCase):
 
 
         self.assertTrue(np.allclose(H_cuda, H_numpy, atol=self.tolerance))
-        self.assertTrue(np.allclose(B_cuda, B_numpy, atol=self.tolerance))
+        self.assertTrue(np.allclose(B_cuda, B_numpy.T, atol=self.tolerance))
 
 
 

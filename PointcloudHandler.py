@@ -85,7 +85,7 @@ class PointcloudHandler:
         points = np.empty((num_points, 6))
         for chunk in pd.read_csv(
                 path + "/" + filename,
-                delim_whitespace=True,
+                sep='\s+',
                 skiprows=header_lines,
                 names=col_names,
                 dtype={'x': float, 'y': float, 'z': float, 'r': int, 'g': int, 'b': int},

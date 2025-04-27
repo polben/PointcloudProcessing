@@ -7,7 +7,6 @@ import numpy as np
 from ComputeShader import ComputeShader
 from EnvironmentConstructor import EnvironmentConstructor
 from LidarDataReader import LidarDataReader
-from OutlierFilter import OutlierFilter
 from OxtsDataReader import OxtsDataReader
 from PointcloudAlignment import PointcloudAlignment
 from PointcloudIcpContainer import PointcloudIcpContainer
@@ -92,7 +91,7 @@ class FunctionalTesting(unittest.TestCase):
         self.renderer.addPoints(pts1)
 
 
-
+        self.renderer.close()
 
 
     @staticmethod
@@ -245,6 +244,9 @@ class FunctionalTesting(unittest.TestCase):
             self.renderer.setLines(self.icpContainer.connectPointsInOrder(scan_points), None)
             time.sleep(0.1)
 
+        self.renderer.close()
+
+
     def test_uniformGridICP_LS(self):
         grid1 = self.icpContainer.getUniformShape()
         R = PointcloudAlignment.randomRotation(0.4)
@@ -272,6 +274,8 @@ class FunctionalTesting(unittest.TestCase):
 
             time.sleep(1)
 
+        self.renderer.close()
+
     def test_getNormalsTest(self):
         lines = []
 
@@ -294,7 +298,7 @@ class FunctionalTesting(unittest.TestCase):
 
         normals = FunctionalTesting.getNormals(scan_lines, pts, origin, self.icpContainer)
 
-        for i in range(0, len(pts), 1):
+        for i in range(0, len(normals), 1):
             refp = pts[i]
             normal = normals[i]
             addLine(refp, refp + normal * 0.1)
@@ -303,6 +307,7 @@ class FunctionalTesting(unittest.TestCase):
                 self.renderer.setLines(lines)
 
         self.assertTrue(True)
+        self.renderer.close()
 
     def test_gpuNormals(self):
 
@@ -336,6 +341,8 @@ class FunctionalTesting(unittest.TestCase):
 
             if i % 1000 == 0 and len(lines) > 1:
                 self.renderer.setLines(lines, colors)
+
+        self.renderer.close()
 
 
     def test_pointToPointLSShouldConverge(self):
@@ -407,6 +414,7 @@ class FunctionalTesting(unittest.TestCase):
         time.sleep(1)
 
         self.renderer.addPoints(pts2, self.red)  # display transformed points
+        self.renderer.close()
 
 
     def test_findClosestPointGpu(self):
@@ -443,6 +451,7 @@ class FunctionalTesting(unittest.TestCase):
             lines.extend([pts2[i], pts1[c]])
         self.renderer.setLines(lines)
 
+        self.renderer.close()
 
     def test_pointToPlaneLSShouldConverge(self):
 
@@ -519,6 +528,7 @@ class FunctionalTesting(unittest.TestCase):
 
         self.renderer.freePoints(pp2)
         self.renderer.addPoints(pts2, np.array([255,0,0]))
+        self.renderer.close()
 
     def test_binaryScanLineSearch(self):
         def sphereProject(point, origin):
@@ -583,8 +593,9 @@ class FunctionalTesting(unittest.TestCase):
                 print(str(i) + " sl was error, found: " + str(found_scan))
 
 
+        self.renderer.close()
 
-    def test_findClosestPoint(self): # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    def test_findClosestPoint(self):
         def binaryScanLineSearch(points_a, scanline, reference_point, origin):
 
 
@@ -669,6 +680,7 @@ class FunctionalTesting(unittest.TestCase):
             closest = binaryScanLineSearch(points_a, scan_line, refp, origin)
             lines.extend([refp, points_a[closest]])
 
+        self.renderer.close()
 
     def test_showScanLines(self):
 
@@ -688,6 +700,7 @@ class FunctionalTesting(unittest.TestCase):
             self.renderer.setLines(lines, colors)
             time.sleep(0.1)
 
+        self.renderer.close()
 
     def test_projectLidarToSphere(self):
         filenames = self.lidarDataReader.getfilenames()
@@ -701,6 +714,7 @@ class FunctionalTesting(unittest.TestCase):
         self.renderer.addPoints(pc, np.array([1, 1, 1]))
         # self.renderer.setLines(lines)
 
+        self.renderer.close()
 
     def test_shouldGetApproximatePath(self):
         lidar, oxts = self.environment.getNextFrameData(0)
@@ -738,6 +752,7 @@ class FunctionalTesting(unittest.TestCase):
             self.renderer.setLines(lines, colors)
             time.sleep(0.1)
 
+        self.renderer.close()
 
     def test_shouldAlignBasedOnImu(self): ### !!! this is the real deal
         self.lidarDataReader.init(self.path, self.calibration, "02", 10, None)
@@ -781,6 +796,7 @@ class FunctionalTesting(unittest.TestCase):
             prevtime = currtime
             prevpos = currpos
 
+        self.renderer.close()
 
 
     def test_showPointsWithoutTranslation(self):
@@ -788,7 +804,7 @@ class FunctionalTesting(unittest.TestCase):
         ptr = None
 
         counter = 0
-        while self.renderer.inited:
+        for i in range(50):
             counter += 1
             pts = self.getLidarPoints(counter)
             if ptr is not None:
@@ -799,6 +815,7 @@ class FunctionalTesting(unittest.TestCase):
             if counter >= self.lidarDataReader.count - 1:
                 counter = 0
 
+        self.renderer.close()
 
     def test_accumulatePoints(self):
         for i in range(10):
@@ -856,58 +873,6 @@ class FunctionalTesting(unittest.TestCase):
         self.renderer.close()
 
 
-    """def test_shouldVoxelizePoints(self):
-        filenames = self.lidarDataReader.getfilenames()
-        pts, cols = self.lidarDataReader.getPoints(filenames[0])
-
-        voxelizer = Voxelizer(0.1)
-
-
-        voxelizer.addPoints(pts, cols)
-
-        v_pts, v_cls = voxelizer.getPoints()
-        self.renderer.addPoints(v_pts, v_cls)
-
-
-    def test_shouldVoxelizeSequence(self):
-        ptr = None
-        files = self.lidarDataReader.getfilenames()
-
-        prevpos = np.array([0, 0, 0])
-        currpos = np.array([0, 0, 0])
-        prevtime = None
-        currtime = self.oxtsDataReader.getOx(files[0]).getTime()
-
-        voxelizer = Voxelizer(self.renderer, voxelSize=self.VOXEL_SIZE, maxDensity=1000)
-
-        for i in range(10):
-            name = files[i]
-            oxts = self.oxtsDataReader.getOx(name)
-            rot = np.linalg.inv(oxts.getTrueRotation(np.eye(3)))
-            yawrot = oxts.getYawRotation(np.eye(3))
-            rot = yawrot @ rot
-
-            if prevtime is not None:
-                velocity = -oxts.getVelocity()
-                currtime = oxts.getTime()
-                deltatime = (currtime - prevtime).total_seconds()
-                velocity = (rot @ velocity.T).T
-
-                currpos = prevpos + velocity * deltatime
-
-
-            pts, cols = self.lidarDataReader.getPoints(files[i])
-            pts = (rot @ pts.T).T + currpos
-
-
-            voxelizer.addPoints(pts, cols)
-
-
-            time.sleep(0.5)
-
-            prevtime = currtime
-            prevpos = currpos"""
-
     def getAlignedLidarPoints(self, num_scans):
         files = self.lidarDataReader.getfilenames()
 
@@ -955,12 +920,15 @@ class FunctionalTesting(unittest.TestCase):
         pts = self.getLidarPoints(0)
         pts = Voxelizer.voxelGroundFilter(pts)
         self.renderer.addPoints(pts)
-
+        time.sleep(2)
+        self.renderer.close()
 
 
     def test_showIntensities(self):
         pts, cls, ints = self.lidarDataReader.getPointsWithIntensities(self.lidarDataReader.getfilenames()[0])
         self.renderer.addPoints(pts, ints)
+        time.sleep(2)
+        self.renderer.close()
 
     def test_canRenderVoxels(self):
         pts, poses, rots = self.getAlignedLidarPoints(10)
@@ -980,6 +948,9 @@ class FunctionalTesting(unittest.TestCase):
 
         lines = v.getVoxelsAsLineGrid()
         self.renderer.setLines(lines)
+
+        time.sleep(2)
+        self.renderer.close()
 
     def generate_3d_grid(self, x_width, y_width, z_width, spacing=1.0):
         x = np.arange(0, x_width, spacing)
@@ -1012,8 +983,8 @@ class FunctionalTesting(unittest.TestCase):
 
                 self.renderer.addPoints(pp, self.randcolor())
 
-
-
+        time.sleep(2)
+        self.renderer.close()
 
     def test_voxelIntegrityGrid(self):
         pts, poses, rots = self.getAlignedLidarPoints(10)
@@ -1052,10 +1023,8 @@ class FunctionalTesting(unittest.TestCase):
 
         lines = v.getVoxelsAsLineGrid()
         self.renderer.setLines(lines)
-
-    def test_idle(self):
-        time.sleep(10)
-
+        time.sleep(2)
+        self.renderer.close()
 
     def test_showColors(self):
         self.lidarDataReader.init(self.path, self.calibration, "02", 10, None)
@@ -1064,83 +1033,21 @@ class FunctionalTesting(unittest.TestCase):
         points, colors, ints = self.lidarDataReader.getPointsWithIntensities(self.lidarDataReader.getfilenames()[0])
         self.renderer.addPoints(points, colors)
 
+        time.sleep(2)
+        self.renderer.close()
     def test_canFilterStaticVoxels(self):
-        self.lidarDataReader.init(self.path, self.calibration, "02", 200, None)
-        self.oxtsDataReader.init(self.path)
 
+
+        self.environment.cleanup()
         self.environment.init(voxel_size=0.5)
 
-        for i in range(150):
+        for i in range(30):
             lidardata, oxts = self.environment.getNextFrameData(0)
             self.environment.calculateTransition_imu(lidardata, oxts, point_to_plane=True, debug=False,
-                                                           iterations=10, separate_colors=True, removeOutliers=True, pure_imu=False )
+                                                           iterations=10, separate_colors=True, removeOutliers=True, pure_imu=True )
         self.environment.voxelizer.stageAllRemaningVoxels()
-
-    def test_can_renderVoxelData(self):
-            pts, poses, rots = self.getAlignedLidarPoints(10)
-
-            v = Voxelizer(self.computeShader, None)
-            v.init(0.5)
-
-
-
-            voxels = []
-
-
-            for i in range(0, 10):
-                pc = pts[i]
-
-                st = time.time()
-                v.addPoints(pc, None)
-                print("expanson: " + str(time.time() - st))
-
-            v.refreshVoxelData()
-
-            voxels = []
-            for i in range(v.getStoredVoxelCount()):
-                vdat_ind = v.getVoxelDataIndexAt(i)
-                stored = v.getStoredCount(vdat_ind)
-                if stored > 10:
-                    vox_points = v.getStoredPoints(vdat_ind)
-                    voxels.append(self.renderer.addPoints(vox_points, self.randcolor()))
-
-
-
-
-
-
-            """lines = v.getVoxelsAsLineGrid()
-            self.renderer.setLines(lines)"""
-
-
-
-
-    def test_shouldExpand(self):
-        pts, poses, rots = self.getAlignedLidarPoints(10)
-
-        v = Voxelizer(self.computeShader, None, voxel_size=0.4)
-
-        pc = pts[0]
-
-        st = time.time()
-        v.addPoints(pc, True)
-        print("expanson: " + str(time.time()-st))
-
-
-        voxels = v.getVoxelPositions()
-
-
-
-        st = time.time()
-        v.addPoints(pts[1], True)
-        print("2nd expanson: " + str(time.time()-st))
-
-        st = time.time()
-        v.addPoints(pts[2], True)
-        print("3rd expanson: " + str(time.time() - st))
-
-        self.renderer.addPoints(voxels)
-
+        time.sleep(2)
+        self.renderer.close()
 
 
 
@@ -1148,49 +1055,8 @@ class FunctionalTesting(unittest.TestCase):
         self.renderer.addPoints(Renderer.unitCube())
         self.renderer.setLines(Renderer.unitCubeEdges())
 
-
-
-    def test_gpuCanVoxelize(self):
-
-        pts, poses, rots = self.getAlignedLidarPoints(10)
-
-        v = Voxelizer(self.computeShader, None, voxel_size=0.5)
-
-        pc = pts[0]
-
-        st = time.time()
-        v.addPoints(pc)
-        print("expanson: " + str(time.time() - st))
-
-        pc = pts[1]
-
-        st = time.time()
-        v.addPoints(pc)
-        print("expanson: " + str(time.time() - st))
-
-        pc = pts[2]
-
-        st = time.time()
-        v.addPoints(pc)
-        print("expanson: " + str(time.time() - st))
-
-
-    def test_voxelStats(self):
-        pts, poses, rots = self.getAlignedLidarPoints(30)
-
-        v = Voxelizer(self.computeShader, self.renderer, voxel_size=0.5)
-
         time.sleep(2)
-
-        for i in range(0, 30):
-            pc = pts[i]
-
-            st = time.time()
-            v.addPoints(pc)
-            print("expanson: " + str(time.time() - st))
-
-
-
+        self.renderer.close()
 
 
 

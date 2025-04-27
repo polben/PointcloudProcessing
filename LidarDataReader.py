@@ -97,41 +97,6 @@ class LidarDataReader:
         for k in keys:
             del self.datamap[k]
 
-    def filter_points(self, np_points):
-
-        plane_normal = np.array([0, 0, 1])
-        lidar_height = 1.73
-        lidar_offset = np.array([0, 0, -lidar_height])
-
-        mask_plane = self.mask_ground(np_points, plane_normal, lidar_offset, 0.3)
-        #return np_points[mask_plane]
-
-
-        distances = np.linalg.norm(np_points, axis = 1)
-        max = np.max(distances) / 3.0
-        probabilities = (distances / max) ** 2
-        randoms = np.random.rand(len(probabilities))
-        mask_distance = probabilities > randoms
-        # return np_points[mask_distance]
-
-
-        return np_points[~mask_plane | mask_distance]
-
-        a= 0
-
-    def mask_ground(self, points, normal, point_on_plane, threshold):
-
-        a, b, c = normal
-        x0, y0, z0 = point_on_plane
-
-        # Compute the plane's d constant
-        d = -(a * x0 + b * y0 + c * z0)
-
-        # Compute distances of all points to the plane
-        distances = (a * points[:, 0] + b * points[:, 1] + c * points[:, 2] + d) / np.linalg.norm(normal)
-
-        # Filter points that are farther than the threshold
-        return distances < threshold
 
     def createColors(self, points, color_indexes, colors, int_cls):
         point_count = len(points)
@@ -170,26 +135,6 @@ class LidarDataReader:
         return indexes, colors, points2d
         # return self.filterOnDepth(color_x, color_y, image, depths, indexes, points2d)
 
-    def filterOnDepth(self, pixel_x, pixel_y, image, depths, indexes, points2d):
-        pixel_indices = pixel_y * self.width + pixel_x  # Flattened pixel index
-        unique_pixels = {}
-
-        filtered_indexes = []
-        filtered_colors = []
-        filtered_points2d = []
-
-        for i in range(len(pixel_indices)):
-            px_idx = pixel_indices[i]
-            if px_idx not in unique_pixels or depths[i] < unique_pixels[px_idx][0]:
-                unique_pixels[px_idx] = (depths[i], i)  # Store depth & index
-
-        # Collect filtered points
-        for _, i in unique_pixels.values():
-            filtered_indexes.append(indexes[i])
-            filtered_colors.append(image[pixel_y[i], pixel_x[i]])
-            filtered_points2d.append(points2d[:, i])
-
-        return np.array(filtered_indexes), np.array(filtered_colors), np.array(filtered_points2d).T
 
     @staticmethod
     def aligningRotation():
@@ -212,8 +157,6 @@ class LidarDataReader:
 
             return np.array(image)  # Convert to NumPy array
 
-    def getCurrentName(self):
-        return self.getfilenames()[self.currentName]
 
 
     def getPoints(self, filename):
@@ -223,36 +166,10 @@ class LidarDataReader:
         return np.ascontiguousarray(self.datamap[filename][0]), np.ascontiguousarray(self.datamap[filename][1]), self.datamap[filename][2] # the actual points,
 
 
-    def calcDepth(self, np_points):
-        distances = np.linalg.norm(np_points, axis=1).astype(np.float64)
-
-        dist_color = distances / np.max(distances)
-
-        color_buffer = np.zeros((3, len(np_points)), np.float64)
-        color = np.sqrt(dist_color)
-
-        color_buffer[0] = color
-        color_buffer[1] = color
-        color_buffer[2] = color
-
-        return np.ascontiguousarray(color_buffer.T)
-        # had problems with passing this array to point_cloud.colors; might happen because of transpose
 
     def getfilenames(self):
         return list(self.datamap.keys())
 
-    def getNextName(self):
-        names = self.getfilenames()
-
-        ret = names[self.currentName]
-        self.currentName += 1
-        if self.currentName >= len(names):
-            self.currentName = 0
-            return False
-        return ret
-
-    def resetNameIterator(self):
-        self.currentName = 0
 
 
     @staticmethod
@@ -288,13 +205,11 @@ class LidarDataReader:
         with open(self.calibrationPath + "//calib_velo_to_cam.txt", "r") as f:
             lines = f.readlines()
 
-            # Extract the rotation matrix (R)
             R_values = list(map(float, lines[1].split(":")[1].strip().split())) # R:
-            R = np.array(R_values).reshape(3, 3)  # Convert to 3x3 matrix
+            R = np.array(R_values).reshape(3, 3)
 
-            # Extract the translation vector (T)
             T_values = list(map(float, lines[2].split(":")[1].strip().split())) # T:
-            T = np.array(T_values).reshape(3, 1)  # Convert to 3x1 column vector
+            T = np.array(T_values).reshape(3, 1)
 
             return R, T
 
@@ -329,7 +244,7 @@ class LidarDataReader:
 
 
         proj_values = list(map(float, line_proj.strip().split()))
-        proj = np.array(proj_values).reshape(3, 4)  # Convert to 3x1 column vector
+        proj = np.array(proj_values).reshape(3, 4)
 
         rect_00_values = list(map(float, line_rect.strip().split()))
         rect_00 = np.array(rect_00_values).reshape(3, 3)

@@ -426,14 +426,6 @@ class PointcloudIcpContainer:
         return check - 1
 
 
-
-
-
-
-
-
-
-
     def getUniformGrid(self, pointsPerAxis):
         num_points = pointsPerAxis  # Adjust as needed
 
@@ -532,15 +524,11 @@ class PointcloudIcpContainer:
     def get_plane_grid(self, points_per_axis, y_value=0, gridsize = 10.0):
         num_points = points_per_axis  # Adjust as needed
 
-        # Generate linearly spaced values along the x and z axes
         x = np.linspace(-1, 1, num_points) * gridsize
         z = np.linspace(-1, 1, num_points) * gridsize
 
-        # Create a meshgrid for the plane
         X, Z = np.meshgrid(x, z, indexing='ij')
 
-        # The y-coordinate is constant
         Y = np.full_like(X, y_value)
 
-        # Stack the coordinates into a (N, 3) array
         return np.vstack([X.ravel(), Y.ravel(), Z.ravel()]).T
