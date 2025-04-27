@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-import GpuMemoryManager  # Replace 'your_module' with the actual module name
+import GpuMemoryManager
 
 class TestGpuMemoryManager(unittest.TestCase):
 

@@ -1,6 +1,4 @@
 import random
-from datetime import datetime
-from random import randrange
 
 import numpy as np
 

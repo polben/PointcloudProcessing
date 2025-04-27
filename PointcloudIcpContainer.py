@@ -437,35 +437,27 @@ class PointcloudIcpContainer:
     def getUniformGrid(self, pointsPerAxis):
         num_points = pointsPerAxis  # Adjust as needed
 
-        # Generate linearly spaced values along each axis
         x = np.linspace(-1, 1, num_points)
         y = np.linspace(-1, 1, num_points)
         z = np.linspace(-1, 1, num_points)
 
-        # Create a meshgrid
         X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
 
-        # Stack the coordinates into a (N, 3) array
         return np.vstack([X.ravel(), Y.ravel(), Z.ravel()]).T
 
     def getUniformGridSurface(self, pointsPerAxis):
         num_points = pointsPerAxis
 
-        # Generate linearly spaced values along each axis
         x = np.linspace(-1, 1, num_points)
         y = np.linspace(-1, 1, num_points)
         z = np.linspace(-1, 1, num_points)
 
-        # Create a meshgrid
         X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
 
-        # Flatten the arrays
         X, Y, Z = X.ravel(), Y.ravel(), Z.ravel()
 
-        # Select only points on the surface (at least one coordinate must be at an extreme)
         mask = (X == -1) | (X == 1) | (Y == -1) | (Y == 1) | (Z == -1) | (Z == 1)
 
-        # Apply the mask
         return np.vstack([X[mask], Y[mask], Z[mask]]).T
 
     def getUniformShape(self):

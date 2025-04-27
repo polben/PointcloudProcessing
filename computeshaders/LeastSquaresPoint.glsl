@@ -3,7 +3,6 @@ void getJ(vec3 point, out float j[3][6]) {
     float y = point[1];
     float z = point[2];
 
-    // Filling the matrix based on the provided formula
     j[0][0] = 1.0; j[0][1] = 0.0; j[0][2] = 0.0;    j[0][3] = 0.0; j[0][4] = -z; j[0][5] = y;
     j[1][0] = 0.0; j[1][1] = 1.0; j[1][2] = 0.0;    j[1][3] = z;  j[1][4] = 0.0; j[1][5] = -x;
     j[2][0] = 0.0; j[2][1] = 0.0; j[2][2] = 1.0;    j[2][3] = -y; j[2][4] = x;  j[2][5] = 0.0;

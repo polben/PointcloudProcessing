@@ -1,9 +1,7 @@
-import threading
 import time
 
 import numpy as np
 
-from OutlierFilter import OutlierFilter
 from Voxelizer import Voxelizer
 
 
@@ -34,7 +32,7 @@ class EnvironmentConstructor:
 
         self.local_frame_counter = None
         self.total_frame_counter = None
-        self.reset_origin_treshold = 5
+        self.reset_origin_treshold = 10
 
 
 

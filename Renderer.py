@@ -139,11 +139,9 @@ class Renderer:
         screen_width = video_mode.size.width
         screen_height = video_mode.size.height
 
-        # Calculate position to place the window on the right side (and center it vertically)
         xpos = screen_width - self.width - 10
         ypos = 50
 
-        # Set the window position
         glfw.set_window_pos(self.window, xpos, ypos)
 
 
@@ -188,7 +186,7 @@ class Renderer:
 
 
 
-        self.model = glm.mat4(1.0)  # Identity matrix (no transformation)
+        self.model = glm.mat4(1.0)
         self.updateCamera()
         self.projection = glm.perspective(glm.radians(45.0), self.width / self.height, 0.1,
                                           100.0)  # Perspective projection
@@ -208,7 +206,6 @@ class Renderer:
                 break
 
 
-            # Clear the screen
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
             glUseProgram(self.shader_program)
@@ -235,7 +232,7 @@ class Renderer:
                 glBindVertexArray(self.lineVAO)
                 self.updateLineVBO()
                 glDrawArrays(GL_LINES, 0, len(self.lineVertices))
-                glBindVertexArray(0)  # Unbind VAO
+                glBindVertexArray(0)
 
 
             glfw.swap_buffers(self.window)
@@ -429,27 +426,22 @@ class Renderer:
         if self.lineVBO is None:  # First-time initialization
             self.lineVBO = glGenBuffers(1)
             glBindBuffer(GL_ARRAY_BUFFER, self.lineVBO)
-            self.buffer_capacity = max(self.lineVertices.nbytes, 1024)  # Start with at least 1KB
-            glBufferData(GL_ARRAY_BUFFER, self.buffer_capacity, None, GL_DYNAMIC_DRAW)  # Allocate but don't upload
+            self.buffer_capacity = max(self.lineVertices.nbytes, 1024)
+            glBufferData(GL_ARRAY_BUFFER, self.buffer_capacity, None, GL_DYNAMIC_DRAW)
         else:
             glBindBuffer(GL_ARRAY_BUFFER, self.lineVBO)
 
-        # Check if buffer size needs to be increased
         current_size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE)
 
         if self.lineVertices.nbytes > current_size:
-            self.buffer_capacity = max(self.buffer_capacity * 2, self.lineVertices.nbytes)  # Double size or fit data
-            glBufferData(GL_ARRAY_BUFFER, self.buffer_capacity, None, GL_DYNAMIC_DRAW)  # Reallocate with new size
-            # print(f"Resized line buffer to {self.buffer_capacity} bytes")  # Debug print
+            self.buffer_capacity = max(self.buffer_capacity * 2, self.lineVertices.nbytes)
+            glBufferData(GL_ARRAY_BUFFER, self.buffer_capacity, None, GL_DYNAMIC_DRAW)
         else:
-            # Simply update the existing buffer
             glBufferSubData(GL_ARRAY_BUFFER, 0, self.lineVertices.nbytes, self.lineVertices)
 
-        # Position attribute (location 0)
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * self.float_size, ctypes.c_void_p(0))
         glEnableVertexAttribArray(0)
 
-        # Color attribute (location 1)
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * self.float_size, ctypes.c_void_p(3 * self.float_size))
         glEnableVertexAttribArray(1)
 
@@ -530,7 +522,6 @@ class Renderer:
             glDeleteProgram(self.lineShader)
             self.lineShader = None
 
-        # Destroy Window & Terminate GLFW
         glfw.destroy_window(self.window)
         glfw.terminate()
 

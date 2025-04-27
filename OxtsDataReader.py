@@ -1,7 +1,5 @@
-import array
 import math
 import os
-import struct
 from datetime import datetime
 
 import numpy as np

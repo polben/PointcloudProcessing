@@ -33,11 +33,9 @@ class PointcloudHandler:
 
         rgb_scaled = (memory_data[:, 3:6][:num_points] * 255).clip(0, 255).astype(np.uint8)
 
-        # Combine XYZ with scaled RGB
         xyz = memory_data[:, 0:3][:num_points]
         final_data = np.hstack((xyz, rgb_scaled))
 
-        # Open the file and write the data
         with open(path_to_save_to + ".ply", 'w') as f:
             f.write(header)
 
@@ -45,12 +43,10 @@ class PointcloudHandler:
         for i in range(0, num_points, CHUNK_SIZE):
             end = min(i + CHUNK_SIZE, num_points)
 
-            # Extract chunk
             xyz = memory_data[i:end, 0:3]
             rgb = (memory_data[i:end, 3:6] * 255).clip(0, 255).astype(np.uint8)
             chunk_data = np.hstack((xyz, rgb))
 
-            # Append to file
             with open(path_to_save_to + ".ply", 'a') as fa:
                 np.savetxt(fa, chunk_data, fmt="%.6f %.6f %.6f %d %d %d")
 
@@ -127,7 +123,6 @@ class PointcloudHandler:
 
         xyz = np.stack([vertex_data['x'], vertex_data['y'], vertex_data['z']], axis=-1)
 
-        # Optional: handle RGB if it exists
         if 'red' in vertex_data.dtype.names:
             rgb = np.stack([
                 vertex_data['red'],

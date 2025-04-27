@@ -147,6 +147,21 @@ class Voxelizer:
             if ui is not None:
                 ui.setPointCounter(self.renderer.MemoryManager.getMaxPointIndex())
             if not np.any(voxels_to_render):
+                for i in range(10):
+                    print("flushing " + str(i))
+                    self.voxel_stats, voxels_to_render = self.compute.prepareDispatchVoxelStager(self.voxel_index,
+                                                                                                 self.stored_voxels,
+                                                                                                 self.max_points,
+                                                                                                 self.voxel_stats,
+                                                                                                 filter_outliers=self.filter_outliers,
+                                                                                                 stage_everything=True)
+                    if self.renderer is not None:
+                        for v_slice in voxels_to_render:
+                            points, colors = self.getStoredPointsFromVoxelDataSlice(v_slice)
+                            self.voxman.frameVoxelized(points, colors, self.separate_colors)
+
+                    if ui is not None:
+                        ui.setPointCounter(self.renderer.MemoryManager.getMaxPointIndex())
                 break
 
     def vectorizedGetVoxelCoord(self, np_points):

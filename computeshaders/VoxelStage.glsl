@@ -124,16 +124,38 @@ int findVoxelId(ivec3 voxel_coord){
 
 }
 
-bool groundRule(bool matches[6]){
-    return
-    ( matches[2] && matches[3] && matches[4] && matches[5] ) ||
-    ( !matches[2] && matches[3] && matches[4] && matches[5] ) ||
-    ( matches[2] && !matches[3] && matches[4] && matches[5] ) ||
-    ( matches[2] && matches[3] && !matches[4] && matches[5] ) ||
-    ( matches[2] && matches[3] && matches[4] && !matches[5] );
+int getPointCount(int idx){
+    float max_prob_prev_points = voxel_stat[idx][1];
+    float max_prob = max_prob_prev_points - float(int(max_prob_prev_points));
+    return int(max_prob_prev_points);
 }
 
-bool recoverVoxel(ivec4 currentVoxelId){
+bool groundRule1(bool vfound[6], bool vstatic[6]){
+    return
+    ( vstatic[2] && vstatic[3] && vstatic[4] && vstatic[5] ) ||
+    ( !vstatic[2] && vstatic[3] && vstatic[4] && vstatic[5] ) ||
+    ( vstatic[2] && !vstatic[3] && vstatic[4] && vstatic[5] ) ||
+    ( vstatic[2] && vstatic[3] && !vstatic[4] && vstatic[5] ) ||
+    ( vstatic[2] && vstatic[3] && vstatic[4] && !vstatic[5] );
+}
+
+bool groundRule2(bool vfound[6], bool vstatic[6], int indices[6]){
+    int hfound = 0;
+    for (int i = 2; i < 6; i++){
+        if (vstatic[i]){
+            hfound++;
+        }
+    }
+    if (hfound >= 2){
+        if(!vfound[1]){
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool recoverVoxel(ivec4 currentVoxelId, int idx){
     ivec3 up = ivec3(0, 1, 0);
     ivec3 down = ivec3(0, -1 ,0);
     ivec3 side1 = ivec3(1, 0, 0);
@@ -141,33 +163,39 @@ bool recoverVoxel(ivec4 currentVoxelId){
     ivec3 side3 = ivec3(0, 0, 1);
     ivec3 side4 = ivec3(0, 0, -1);
     ivec3 sides[] = {up, down, side1, side2, side3, side4};
-    bool matches[6];
+    bool vfound[6];
+    bool vstatic[6];
+    int indices[6];
+
     ivec3 this_voxel_id = ivec3(currentVoxelId);
 
     for (int i = 0; i < 6; i++){
         int found = findVoxelId(this_voxel_id + sides[i]);
+        indices[i] = found;
         if (found != -1){
+            vfound[i] = true;
             int voxel_stat_id = voxel_index[found][3];
             float render_status = voxel_stat[voxel_stat_id][3];
             float stage_status = voxel_stat[voxel_stat_id][2];
 
             if (render_status > 0.5 || stage_status > 0.1){ // voxel next to this: either rendered, or ready to stage
-                matches[i] = true;
+                vstatic[i] = true;
             }else{
-                matches[i] = false;
+                vstatic[i] = false;
             }
         }else{
-            matches[i] = false;
+            vfound[i] = false;
         }
     }
 
-    if(groundRule(matches)){
+    if(groundRule1(vfound, vstatic) || groundRule2(vfound, vstatic, indices)){
         return true;
     }
 
 
     return false;
 }
+
 
 
 void main() {
@@ -213,7 +241,7 @@ void main() {
         if (stage_status > 0.1) {
             voxel_stat[idx][2] = 0.8;
         }else{
-            if (recoverVoxel(voxelId) && counter_buffer[0][5] != 1){
+            if (counter_buffer[0][5] != 1 && recoverVoxel(voxelId, idx)){
                 voxel_stat[idx][2] = 0.8;
             }
         }

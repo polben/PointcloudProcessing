@@ -172,6 +172,7 @@ class UI:
                     break
 
             if kitti_path is not None:
+                self.button_load.config(state="disabled")
                 self.appendConsole("Kitti dataset folders found!")
                 if self.prev_kitti != kitti_path:
                     self.prev_kitti = kitti_path
@@ -183,6 +184,8 @@ class UI:
                     self.oxts.init(kitti_path)
 
                     self.setFrameCounter(0, self.lidar.count)
+                    self.button_load.config(state="normal")
+
                 else:
                     self.appendConsole("Previous KITTI folder path was selected")
                     return
