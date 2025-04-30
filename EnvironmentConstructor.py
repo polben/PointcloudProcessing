@@ -35,7 +35,7 @@ class EnvironmentConstructor:
         self.reset_origin_treshold = 10
 
 
-
+        self.added_path_points = None
 
         self.prev_poses = None
 
@@ -50,6 +50,7 @@ class EnvironmentConstructor:
         self.local_frame_counter = 0
         self.total_frame_counter = 0
         self.prev_poses = []
+        self.added_path_points = None
 
         self.voxelizer.init(voxel_size)
 
@@ -69,6 +70,7 @@ class EnvironmentConstructor:
         self.framekeys = []
         self.reference_points = None
         self.prev_origin = None
+        self.freePathPoints()
 
         self.voxelizer.cleanup()
 
@@ -130,7 +132,24 @@ class EnvironmentConstructor:
         return t_opt, R_opt
 
 
+    def freePathPoints(self):
+        if self.added_path_points is not None:
+            try:
+                self.renderer.freePoints(self.added_path_points)
+            except ValueError as e:
+                pass
 
+    def addPathPoints(self):
+        self.freePathPoints()
+
+        points = []
+        colors = []
+        for i in range(len(self.prev_poses)):
+            next_pure_imu_position, refined_position, _, _, _ = self.prev_poses[i]
+            points.extend([next_pure_imu_position, refined_position])
+            colors.extend([self.red, self.green])
+
+        self.added_path_points = self.renderer.addPoints(points, colors)
 
     def calculateTransition_imu(self, current_lidar, current_oxts, point_to_plane=True, debug=False, iterations=20, separate_colors=False, removeOutliers=False, pure_imu=False):
 
@@ -236,11 +255,6 @@ class EnvironmentConstructor:
 
 
             self.prev_poses.append((next_pure_imu_position, refined_position, current_rotation, refined_rotation, current_time))
-
-
-            self.renderer.addPoints([next_pure_imu_position], self.red)
-            self.renderer.addPoints([refined_position], self.green)
-
 
 
 

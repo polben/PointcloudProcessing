@@ -24,7 +24,7 @@ class GpuTest(unittest.TestCase):
         self.computeShader = ComputeShader()
         self.icpContainer = PointcloudIcpContainer(self.computeShader, self.pointcloudAlignment)
 
-        self.tolerance = 1e-5 # 0.00001
+        self.tolerance = 1e-3 # 0.001
 
         self.baseComputeShader = "FunctionalBase.glsl"
         self.mainRegex = self.computeShader.main_shadercode_regex

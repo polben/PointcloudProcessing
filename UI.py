@@ -1,7 +1,10 @@
 import os
+import threading
 import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+
+import numpy as np
 
 from ComputeShader import ComputeShader
 from EnvironmentConstructor import EnvironmentConstructor
@@ -15,6 +18,7 @@ from PointcloudHandler import PointcloudHandler
 class UI:
 
     def __init__(self, lauch=True):
+        self.request_stop_drive = False
         self.prev_pointclouds = None
         self.button_stop_build = None
         self.stop_build = False
@@ -23,7 +27,7 @@ class UI:
         self.root = None
         self.title = "Pointcloud Visualizer"
         self.w = 400
-        self.h = 520
+        self.h = 600
         self.x = 10
         self.y = 10
         self.resolution = f"{self.w}x{self.h}+{self.x}+{self.y}"
@@ -34,6 +38,10 @@ class UI:
         self.button_calib = None
         self.button_next = None
         self.button_prev = None
+        self.button_drive = None
+        self.button_recenter = None
+        self.button_path_toggle = None
+        self.button_stop_drive = None
         self.label_frame_counter = None
         self.label_color_mode = None
         self.radio_color = None
@@ -84,7 +92,7 @@ class UI:
         self.current_lidar_frame = 0
         self.current_pointcloud_frame = 0
 
-
+        self.path_shown = False
 
         self.loadedKitti = False
         self.loadedPointclouds = False
@@ -237,6 +245,9 @@ class UI:
         self.button_mode_switch.config(state="normal")
         self.radio_color.config(state="disabled")
         self.button_stop_build.config(state="disabled")
+        self.button_path_toggle.config(state="disabled")
+        self.button_drive.config(state="disabled")
+        self.button_stop_drive.config(state="disabled")
 
     def beginBuildUi(self):
         self.button_stop_build.config(state="normal")
@@ -249,6 +260,9 @@ class UI:
         self.button_load.config(state="disabled")
         self.button_calib.config(state="disabled")
         self.button_save.config(state="disabled")
+        self.button_path_toggle.config(state="disabled")
+        self.button_drive.config(state="disabled")
+        self.button_stop_drive.config(state="disabled")
 
 
     def endBuildUi(self):
@@ -261,6 +275,9 @@ class UI:
         self.radio_color.config(state="normal")
         self.button_load.config(state="normal")
         self.button_calib.config(state="normal")
+        self.button_path_toggle.config(state="normal")
+        self.button_drive.config(state="normal")
+        self.button_stop_drive.config(state="disabled")
 
         self.toggleSaveButton()
 
@@ -418,6 +435,8 @@ class UI:
 
 
         self.setFrameCounter(self.current_lidar_frame + 1, len(filenames))
+        self.setPointCounter(self.renderer.MemoryManager.getMaxPointIndex())
+
 
     def renderConsecutivePointcloud(self, offset):
         self.current_pointcloud_frame += offset
@@ -437,6 +456,9 @@ class UI:
 
             self.setFrameCounter(self.current_pointcloud_frame + 1, len(self.pointcloudhandler.loaded_pointclouds))
 
+        self.setPointCounter(self.renderer.MemoryManager.getMaxPointIndex())
+
+
     def comm_button_save(self):
         save_path = filedialog.asksaveasfilename(
             title="Please select a path to save the rendered points",
@@ -446,6 +468,7 @@ class UI:
         self.pointcloudhandler.savePointcloudPly(save_path, self)
 
     def comm_button_next(self):
+
         if self.rendering_mode == self.RENDER_FRAME:
             self.renderConsecutiveFrame(1)
 
@@ -648,6 +671,24 @@ class UI:
                                       bg="gray", fg="black", font=("Arial", 10, "bold"))
         self.button_stop_build.pack(side="left", expand=True, fill="x", padx=(5, 0))
 
+        control_buttons_frame = tk.Frame(self.info_frame, bg="black")
+        control_buttons_frame.pack(fill="x", pady=(0, 10), padx=0)
+        self.button_drive = tk.Button(control_buttons_frame, text="Drive", command=self.comm_button_drive,
+                                      bg="gray", fg="black", font=("Arial", 10, "bold"))
+        self.button_drive.pack(side="left", expand=True, fill="x", padx=(5, 0))
+
+        self.button_stop_drive = tk.Button(control_buttons_frame, text="Stop Drive", command=self.comm_button_stop_drive,
+                                      bg="gray", fg="black", font=("Arial", 10, "bold"))
+        self.button_stop_drive.pack(side="left", expand=True, fill="x", padx=(5, 0))
+
+        self.button_recenter = tk.Button(control_buttons_frame, text="Recenter", command=self.comm_button_recenter,
+                                           bg="gray", fg="black", font=("Arial", 10, "bold"))
+        self.button_recenter.pack(side="left", expand=True, fill="x", padx=(5, 0))
+
+        self.button_path_toggle = tk.Button(control_buttons_frame, text="Toggle path", command=self.comm_button_toggle_path,
+                                         bg="gray", fg="black", font=("Arial", 10, "bold"))
+        self.button_path_toggle.pack(side="left", expand=True, fill="x", padx=(5, 5))
+
         # === Environment Modes Section ===
         env_mode_frame = tk.Frame(self.info_frame, bg="black", highlightbackground="white", highlightthickness=1)
         env_mode_frame.pack(fill="x", pady=10, padx=5)
@@ -687,3 +728,87 @@ class UI:
         self.appendConsole("Frame walk")
 
         self.root.mainloop()
+
+    def comm_button_stop_drive(self):
+        self.request_stop_drive = True
+
+    def comm_button_toggle_path(self):
+        if self.path_shown:
+            self.environment.freePathPoints()
+        else:
+            self.environment.addPathPoints()
+
+        self.path_shown = not self.path_shown
+
+    def driveSubroutine(self):
+        poscounter = 1
+        interpolation = 10
+        view_smoothing = 20
+
+        self.renderer.drive_mode = True
+
+        _, prev_pos, _, _, _ = self.environment.prev_poses[0]
+        prev_dir = None
+
+        recent_dirs = []
+        self.environment.freePathPoints()
+
+        while poscounter < self.environment.total_frame_counter and not self.request_stop_drive:
+            _, curr_pos, _, _, current_time \
+                = self.environment.prev_poses[poscounter]
+            if prev_dir is None:
+                prev_dir = curr_pos - prev_pos
+
+            _, _, _, _, prevtime = self.environment.prev_poses[poscounter - 1]
+            delta_time = abs((current_time - prevtime).total_seconds())
+
+            recent_dirs.append(curr_pos - prev_pos)
+            if len(recent_dirs) > view_smoothing:
+                recent_dirs.pop(0)
+
+            avg_dir = np.average(recent_dirs, axis=0)
+
+            for i in range(interpolation):
+                path = curr_pos - prev_pos
+                ipos = prev_pos + path * (i / float(interpolation))
+
+
+                tdir = avg_dir - prev_dir
+                idir = prev_dir + tdir * (i / float(interpolation))
+                self.renderer.setCamera(ipos, idir)
+
+
+                time.sleep(delta_time / float(interpolation))
+
+            prev_pos = curr_pos
+            prev_dir = avg_dir
+
+            poscounter += 1
+
+        self.renderer.drive_mode = False
+        self.request_stop_drive = False
+        if self.path_shown:
+            self.environment.addPathPoints()
+
+        self.button_stop_drive.config(state="disabled")
+        self.button_drive.config(state="normal")
+        self.button_build.config(state="normal")
+        self.button_mode_switch.config(state="normal")
+        self.button_recenter.config(state="normal")
+
+
+    def comm_button_drive(self):
+
+        self.button_stop_drive.config(state="normal")
+        self.button_drive.config(state="disabled")
+        self.button_build.config(state="disabled")
+        self.button_mode_switch.config(state="disabled")
+        self.button_recenter.config(state="disabled")
+
+        thread = threading.Thread(target=self.driveSubroutine, daemon=True)
+        thread.start()
+
+
+
+    def comm_button_recenter(self):
+        self.renderer.resetView()

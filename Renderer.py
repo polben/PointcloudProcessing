@@ -25,6 +25,8 @@ class Renderer:
     point_size = 3 * float_size + 3 * float_size # pos, color
 
     defaultColor = np.array([64, 224, 208]) / 255.0
+    ORIGIN = np.array([0, 0, 0]).astype(np.float32)
+    DEFAULT_ORIENT = np.array([1, 0, 0])
 
     def __init__(self, voxelSize, maxNumberOfPoints=10000000, anim=False):
         self.buffer_capacity = 1024
@@ -38,6 +40,8 @@ class Renderer:
 
         self.yaw = -90.0
         self.pitch = 0.0
+
+        self.drive_mode = False
 
         self.width = 1600
         self.height = 800
@@ -211,7 +215,9 @@ class Renderer:
             glUseProgram(self.shader_program)
             glBindVertexArray(self.VAO)
 
-            self.updateCamera()
+
+            if not self.drive_mode:
+                self.updateCamera()
             self.setMVP(self.shader_program)
 
             glUniform1f(glGetUniformLocation(self.shader_program, "voxelSize"), self.voxelSize)
@@ -446,9 +452,22 @@ class Renderer:
         glEnableVertexAttribArray(1)
 
 
+    def setCamera(self, position, direction):
+        self.position = glm.vec3(position[0], position[1], position[2])
+
+        direction = glm.normalize(glm.vec3(direction[0],direction[1],direction[2]))
+
+        self.view = glm.lookAt(self.position, self.position + direction,
+                               self.up)
 
 
-    def updateCamera(self):
+    def resetView(self):
+        self.pitch = 0
+        self.yaw = -90.0
+        self.position = glm.vec3(0, 0, 0)
+
+
+    def getMouseDir(self):
         if self.inputListener.getLeft():
             delta = self.inputListener.getMouseDelta()
             x = float(delta[0])
@@ -467,7 +486,12 @@ class Renderer:
         y = math.sin(glm.radians(self.pitch))
         z = math.sin(glm.radians(self.yaw)) * math.cos(glm.radians(self.pitch))
         front = glm.normalize(glm.vec3(x,y,z))
+        return front
 
+    def updateCamera(self):
+
+
+        front = self.getMouseDir()
         # handle camera movement
 
         if self.inputListener.left:
