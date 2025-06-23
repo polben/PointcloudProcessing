@@ -5,3 +5,5 @@ Run the main.py file to start the application.
 For running (and importing the libs) I recommend Pycharm Community edition available for free at https://www.jetbrains.com/pycharm/
 
 Github for project: https://github.com/polben/PointcloudProcessing
+
+![Image](https://github.com/user-attachments/assets/559d5818-c460-434d-8306-430647b50aa3)
